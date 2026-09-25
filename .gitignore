@@ -1,0 +1,10 @@
+/build/
+/vendor/
+/.papyrus/
+**/bin/
+**/obj/
+**/__pycache__/
+*.pyc
+*.pyo
+*.user
+*.suo

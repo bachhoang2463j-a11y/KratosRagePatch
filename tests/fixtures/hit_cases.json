@@ -1,0 +1,225 @@
+[
+  {
+    "name": "默认配比：普通2 重击4 特殊3 受击1 击杀5",
+    "settings": { "maximum": 100, "normalHit": 2, "powerHit": 4, "specialHit": 3, "receivedHit": 1, "kill": 5, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0, "kind": "Normal",   "actor": 1, "source": 71 },
+      { "t": 1.0, "kind": "Power",    "actor": 2, "source": 72 },
+      { "t": 2.0, "kind": "Special",  "actor": 3, "source": 73 },
+      { "t": 3.0, "kind": "Received", "actor": 4, "source": 74 },
+      { "t": 4.0, "kind": "Kill",     "actor": 5, "source": 75 }
+    ],
+    "expect": {
+      "awarded": [2, 4, 3, 1, 5],
+      "becameFull": [false, false, false, false, false],
+      "current": 15,
+      "maximum": 100,
+      "eligible": true,
+      "raging": false,
+      "pending": false,
+      "ready": false
+    }
+  },
+  {
+    "name": "同源同目标0.1秒内重复命中只计一次且重复不刷新窗口",
+    "settings": { "maximum": 100, "normalHit": 2, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0,   "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.05,  "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.099, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.1,   "kind": "Normal", "actor": 1, "source": 71 }
+    ],
+    "expect": { "awarded": [2, 0, 0, 2], "current": 4 }
+  },
+  {
+    "name": "0.1秒整边界过期后允许再次计分",
+    "settings": { "maximum": 100, "normalHit": 2, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.1, "kind": "Normal", "actor": 1, "source": 71 }
+    ],
+    "expect": { "awarded": [2, 2], "current": 4 }
+  },
+  {
+    "name": "攻击类别不绕过去重：普通重击特殊同源同目标只算一次",
+    "settings": { "maximum": 100, "normalHit": 2, "powerHit": 4, "specialHit": 3, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0,  "kind": "Normal",  "actor": 1, "source": 71 },
+      { "t": 0.02, "kind": "Power",   "actor": 1, "source": 71 },
+      { "t": 0.03, "kind": "Special", "actor": 1, "source": 71 }
+    ],
+    "expect": { "awarded": [2, 0, 0], "current": 2 }
+  },
+  {
+    "name": "不同目标或不同来源在0.1秒内分别计分",
+    "settings": { "maximum": 100, "normalHit": 2, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0,  "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.01, "kind": "Normal", "actor": 2, "source": 71 },
+      { "t": 0.02, "kind": "Normal", "actor": 1, "source": 72 },
+      { "t": 0.03, "kind": "Normal", "actor": 2, "source": 72 }
+    ],
+    "expect": { "awarded": [2, 2, 2, 2], "current": 8 }
+  },
+  {
+    "name": "受击与击杀是独立通道：与出击同源同目标不互相去重",
+    "settings": { "maximum": 100, "normalHit": 2, "receivedHit": 1, "kill": 5, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0,  "kind": "Normal",   "actor": 1, "source": 71 },
+      { "t": 0.02, "kind": "Received", "actor": 1, "source": 71 },
+      { "t": 0.03, "kind": "Kill",     "actor": 1, "source": 71 },
+      { "t": 0.05, "kind": "Normal",   "actor": 9, "source": 99 }
+    ],
+    "expect": { "awarded": [2, 1, 5, 0], "current": 8 }
+  },
+  {
+    "name": "每秒8点预算由所有来源共享",
+    "settings": { "maximum": 100, "normalHit": 2, "specialHit": 3, "kill": 5, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0, "kind": "Kill",    "actor": 1, "source": 71 },
+      { "t": 0.1, "kind": "Normal",  "actor": 2, "source": 72 },
+      { "t": 0.2, "kind": "Special", "actor": 3, "source": 73 },
+      { "t": 0.3, "kind": "Normal",  "actor": 4, "source": 74 }
+    ],
+    "expect": { "awarded": [5, 2, 1, 0], "current": 8 }
+  },
+  {
+    "name": "超额部分裁剪：按剩余额度部分发放，额度用尽则丢弃",
+    "settings": { "maximum": 100, "normalHit": 3, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.1, "kind": "Normal", "actor": 2, "source": 72 },
+      { "t": 0.2, "kind": "Normal", "actor": 3, "source": 73 },
+      { "t": 0.3, "kind": "Normal", "actor": 4, "source": 74 }
+    ],
+    "expect": { "awarded": [3, 3, 2, 0], "current": 8 }
+  },
+  {
+    "name": "滚动窗口1秒后旧额度释放",
+    "settings": { "maximum": 100, "normalHit": 3, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.1, "kind": "Normal", "actor": 2, "source": 72 },
+      { "t": 0.2, "kind": "Normal", "actor": 3, "source": 73 },
+      { "t": 0.3, "kind": "Normal", "actor": 4, "source": 74 },
+      { "t": 1.0, "kind": "Normal", "actor": 5, "source": 75 }
+    ],
+    "expect": { "awarded": [3, 3, 2, 0, 3], "current": 11 }
+  },
+  {
+    "name": "上限100封顶且满怒只上报一次",
+    "settings": { "maximum": 100, "normalHit": 1000, "maxGainPerSecond": 1000 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.3, "kind": "Normal", "actor": 2, "source": 72 }
+    ],
+    "expect": {
+      "awarded": [100, 0],
+      "becameFull": [true, false],
+      "current": 100,
+      "ready": true
+    }
+  },
+  {
+    "name": "精确填满时报告满怒",
+    "settings": { "maximum": 5, "normalHit": 4, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.2, "kind": "Normal", "actor": 2, "source": 72 }
+    ],
+    "expect": {
+      "awarded": [4, 1],
+      "becameFull": [false, true],
+      "current": 5,
+      "ready": true
+    }
+  },
+  {
+    "name": "不合装备时不积攒",
+    "settings": { "maximum": 100, "normalHit": 2, "kill": 5, "maxGainPerSecond": 8 },
+    "pre": { "eligible": false },
+    "events": [
+      { "t": 0.0, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.1, "kind": "Kill",   "actor": 2, "source": 72 }
+    ],
+    "expect": {
+      "awarded": [0, 0],
+      "current": 0,
+      "eligible": false,
+      "raging": false,
+      "pending": false,
+      "ready": false
+    }
+  },
+  {
+    "name": "变身期间不积攒",
+    "settings": { "maximum": 100, "normalHit": 2, "kill": 5, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true, "raging": true },
+    "events": [
+      { "t": 0.0, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 0.1, "kind": "Kill",   "actor": 2, "source": 72 }
+    ],
+    "expect": {
+      "awarded": [0, 0],
+      "current": 0,
+      "raging": true,
+      "pending": false,
+      "ready": false
+    }
+  },
+  {
+    "name": "配置越界被钳制：上限下限1、负增益归零",
+    "settings": { "maximum": 0, "normalHit": -7, "powerHit": -1, "specialHit": 0, "receivedHit": 0, "kill": 0, "maxGainPerSecond": 0 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 0.0, "kind": "Normal", "actor": 1, "source": 71 }
+    ],
+    "expect": { "awarded": [0], "current": 0, "maximum": 1, "ready": false }
+  },
+  {
+    "name": "同一时间戳的重复事件仍然去重",
+    "settings": { "maximum": 100, "normalHit": 2, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 5.0, "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 5.0, "kind": "Normal", "actor": 1, "source": 71 }
+    ],
+    "expect": { "awarded": [2, 0], "current": 2 }
+  },
+  {
+    "name": "spec_gap_倒退时钟不应让同源同目标命中重复计分",
+    "desc": "契约：0.1 秒去重窗口内的同一次命中不得因时钟回拨而再次计分。当前实现 nowSeconds < lastTime_ 时调用 ClearTransient() 清空去重表，因此回拨即可重复计分；本用例预期失败。",
+    "settings": { "maximum": 100, "normalHit": 2, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 10.0,  "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 9.999, "kind": "Normal", "actor": 1, "source": 71 }
+    ],
+    "expect": { "awarded": [2, 0], "current": 2 }
+  },
+  {
+    "name": "spec_gap_倒退时钟不应重置每秒8点预算",
+    "desc": "契约：1 秒滚动窗口内的 8 点预算不得因时钟回拨而重置。当前实现回拨即清空 gains_，可再刷满 8 点；本用例预期失败。",
+    "settings": { "maximum": 100, "normalHit": 2, "maxGainPerSecond": 8 },
+    "pre": { "eligible": true },
+    "events": [
+      { "t": 10.0,  "kind": "Normal", "actor": 1, "source": 71 },
+      { "t": 10.01, "kind": "Normal", "actor": 2, "source": 72 },
+      { "t": 10.02, "kind": "Normal", "actor": 3, "source": 73 },
+      { "t": 10.03, "kind": "Normal", "actor": 4, "source": 74 },
+      { "t": 9.5,   "kind": "Normal", "actor": 5, "source": 75 }
+    ],
+    "expect": { "awarded": [2, 2, 2, 2, 0], "current": 8 }
+  }
+]

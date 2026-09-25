@@ -1,0 +1,80 @@
+#pragma once
+
+#include "PCH.h"
+#include "RageState.h"
+
+namespace kr {
+
+class GameBridge final : public RE::BSTEventSink<RE::TESMagicEffectApplyEvent>,
+                         public RE::BSTEventSink<RE::TESCombatEvent> {
+public:
+    static GameBridge& Get();
+    void Initialize();
+    bool IsAvailable() const;
+    Snapshot GetSnapshot() const;
+    void Configure(RageSettings settings, float deniedInterval);
+    void RefreshEquipmentState();
+    void SubmitPlayerDamage(RE::FormID targetID, RE::FormID baseID, float healthLost);
+    void SubmitWeaponHit(RE::TESObjectREFR* target, RE::TESForm* source, RE::BGSProjectile* projectile, int flags);
+    void SubmitMagicHit(RE::TESObjectREFR* target, RE::TESForm* source, RE::BGSProjectile* projectile);
+    void SubmitProjectileHit(RE::TESObjectREFR* target, RE::TESForm* source, RE::BGSProjectile* projectile);
+    void SubmitIncomingHit(RE::TESObjectREFR* aggressor, RE::TESForm* source, RE::BGSProjectile* projectile,
+        bool powerAttack, bool sneakAttack, bool bashAttack, bool blocked);
+    void SubmitKill(RE::Actor* victim, RE::Actor* killer);
+    void NotifyActivationAttempt(std::string control, bool rightAttack, bool forward, bool back, bool left, bool right);
+    void ReconcileAfterLoad();
+    SavedState Save() const;
+    void Restore(const SavedState& state);
+    void Revert();
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESMagicEffectApplyEvent*, RE::BSTEventSource<RE::TESMagicEffectApplyEvent>*) override;
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent*, RE::BSTEventSource<RE::TESCombatEvent>*) override;
+
+private:
+    struct CastSpec { RE::SpellItem* spell; float effectiveness; float magnitude; bool selfTarget; };
+
+    void Queue(std::function<void()> task);
+    bool ResolveForms();
+    bool IsAllowedEquipment(RE::Actor*) const;
+    bool HasActiveEffect(RE::Actor*, RE::EffectSetting*) const;
+    void AwardPlayerDamage(RE::FormID targetID, RE::FormID baseID, float healthLost);
+    void UpdateStateFromGame();
+    void SyncReadyMarker();
+    void RunActivationTransaction();
+    bool CastLikePayload(const CastSpec& spec);
+    void ConfirmActivation(std::uint64_t token);
+    void CancelActivation(std::uint64_t token);
+    void CompleteActivation(std::uint64_t token);
+    void Notify(const char* name);
+    void NotifyDenied();
+    static double Now();
+
+    mutable std::recursive_mutex mutex_;
+    RageState state_;
+    bool available_{};
+    bool configured_{};
+    bool needsReconcile_{true};
+    bool registered_{};
+    bool markerChanging_{};
+    float deniedInterval_{0.5f};
+    double lastDenied_{-1000.0};
+    double lastActivation_{-1000.0};
+    double activationDeadline_{};
+    std::uint64_t generation_{};
+    std::optional<std::uint64_t> activation_;
+    RE::EffectSetting* rageEffect_{};
+    RE::SpellItem* rageSpell_{};
+    RE::SpellItem* readyAbility_{};
+    RE::EffectSetting* readyEffect_{};
+    RE::EffectSetting* requestEffect_{};
+    RE::BGSKeyword* axeKeyword_{};
+    std::array<RE::EffectSetting*, 4> movement_{};
+    std::vector<RE::FormID> singleWeapons_;
+    std::vector<RE::FormID> pairedWeapons_;
+    std::vector<CastSpec> successCasts_;
+};
+
+void RegisterSerializationCallbacks();
+bool RegisterPapyrusFunctions(RE::BSScript::IVirtualMachine* vm);
+
+}

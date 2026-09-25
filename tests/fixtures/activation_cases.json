@@ -1,0 +1,165 @@
+[
+  {
+    "name": "满怒唯一token：启动、第二次启动被拒、提交成功清零一次",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 },
+        "expect": { "current": 0, "maximum": 4, "eligible": false, "ready": false } },
+      { "op": "eligible", "value": true, "expect": { "eligible": true, "ready": false } },
+      { "op": "begin", "expect": { "hasToken": false, "ready": false, "pending": false } },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 4, "becameFull": true, "current": 4, "ready": true, "pending": false } },
+      { "op": "begin", "keep": "t1", "expect": { "hasToken": true, "pending": true, "ready": false } },
+      { "op": "begin", "expect": { "hasToken": false, "pending": true, "current": 4 } },
+      { "op": "commit", "tokenRef": "t1",
+        "expect": { "ok": true, "current": 0, "raging": true, "pending": false, "ready": false } },
+      { "op": "commit", "tokenRef": "t1", "expect": { "ok": false, "current": 0, "raging": true } },
+      { "op": "gain", "t": 0.5, "kind": "Normal", "actor": 2, "source": 72,
+        "expect": { "awarded": 0, "current": 0, "raging": true } },
+      { "op": "raging", "value": false, "expect": { "raging": false, "current": 0, "ready": false } },
+      { "op": "snapshot", "expect": { "current": 0, "pending": false, "ready": false } }
+    ]
+  },
+  {
+    "name": "错误token失败保留满怒，正确token中止后可重试",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "eligible", "value": true },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 4, "becameFull": true, "current": 4 } },
+      { "op": "begin", "keep": "t1", "expect": { "hasToken": true, "pending": true } },
+      { "op": "commit", "token": 999999,
+        "expect": { "ok": false, "current": 4, "pending": true, "ready": false } },
+      { "op": "abort", "token": 999999, "expect": { "ok": false, "pending": true, "current": 4 } },
+      { "op": "abort", "tokenRef": "t1",
+        "expect": { "ok": true, "pending": false, "current": 4, "ready": true } },
+      { "op": "begin", "keep": "t2", "expect": { "hasToken": true, "pending": true, "ready": false } },
+      { "op": "commit", "tokenRef": "t1",
+        "expect": { "ok": false, "current": 4, "pending": true, "raging": false } },
+      { "op": "commit", "tokenRef": "t2", "expect": { "ok": true, "current": 0, "raging": true } }
+    ]
+  },
+  {
+    "name": "保存恢复后不自动满怒，且不重复上报满怒",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "eligible", "value": true },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 4, "becameFull": true, "current": 4, "ready": true } },
+      { "op": "save", "keep": "s1",
+        "expect": { "version": 1, "current": 4, "pending": false, "raging": false } },
+      { "op": "reset",
+        "expect": { "current": 0, "eligible": false, "raging": false, "pending": false, "ready": false } },
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "restore", "use": "s1",
+        "expect": { "current": 4, "eligible": false, "ready": false, "pending": false, "raging": false } },
+      { "op": "gain", "t": 1.0, "kind": "Normal", "actor": 2, "source": 72,
+        "expect": { "awarded": 0, "becameFull": false, "current": 4 } },
+      { "op": "eligible", "value": true, "expect": { "ready": true, "current": 4 } },
+      { "op": "gain", "t": 2.0, "kind": "Normal", "actor": 3, "source": 73,
+        "expect": { "awarded": 0, "becameFull": false, "current": 4 } }
+    ]
+  },
+  {
+    "name": "pending读档：实际变身成功才清零",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "eligible", "value": true },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 4, "becameFull": true } },
+      { "op": "begin", "keep": "t1", "expect": { "hasToken": true, "pending": true } },
+      { "op": "save", "keep": "s1",
+        "expect": { "version": 1, "current": 4, "pending": true, "raging": false } },
+      { "op": "reset" },
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "restore", "use": "s1",
+        "expect": { "current": 4, "pending": true, "ready": false, "raging": false } },
+      { "op": "gain", "t": 0.5, "kind": "Normal", "actor": 2, "source": 72,
+        "expect": { "awarded": 0, "current": 4 } },
+      { "op": "begin", "expect": { "hasToken": false, "pending": true } },
+      { "op": "reconcile", "value": true,
+        "expect": { "current": 0, "raging": true, "pending": false, "ready": false } }
+    ]
+  },
+  {
+    "name": "pending读档但实际未变身：保留满怒并可重试",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "eligible", "value": true },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 4, "becameFull": true } },
+      { "op": "begin", "keep": "t1", "expect": { "hasToken": true } },
+      { "op": "save", "keep": "s1", "expect": { "current": 4, "pending": true } },
+      { "op": "reset" },
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "restore", "use": "s1", "expect": { "current": 4, "pending": true, "ready": false } },
+      { "op": "reconcile", "value": false,
+        "expect": { "current": 4, "pending": false, "raging": false, "ready": false } },
+      { "op": "eligible", "value": true, "expect": { "ready": true, "current": 4 } },
+      { "op": "begin", "keep": "t2", "expect": { "hasToken": true, "pending": true } }
+    ]
+  },
+  {
+    "name": "存档版本不符时整体重置",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "eligible", "value": true },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 4, "current": 4 } },
+      { "op": "restore", "value": { "version": 2, "current": 4, "pending": true, "raging": true },
+        "expect": { "current": 0, "pending": false, "raging": false, "eligible": false, "ready": false } }
+    ]
+  },
+  {
+    "name": "恢复时怒气值钳制到当前上限",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "restore", "value": { "version": 1, "current": 999, "pending": false, "raging": false },
+        "expect": { "current": 4, "maximum": 4, "ready": false } },
+      { "op": "restore", "value": { "version": 1, "current": -5, "pending": false, "raging": false },
+        "expect": { "current": 0 } }
+    ]
+  },
+  {
+    "name": "配置范围钳制：上限下限1、每秒预算下限1、负增益归零",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 0, "normalHit": -7, "maxGainPerSecond": 0 },
+        "expect": { "maximum": 1, "current": 0, "ready": false } },
+      { "op": "eligible", "value": true, "expect": { "eligible": true, "ready": false } },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 0, "current": 0, "ready": false } },
+      { "op": "configure", "settings": { "normalHit": 5, "maxGainPerSecond": 0 },
+        "expect": { "maximum": 1, "current": 0 } },
+      { "op": "gain", "t": 1.0, "kind": "Normal", "actor": 2, "source": 72,
+        "expect": { "awarded": 1, "becameFull": true, "current": 1, "ready": true } }
+    ]
+  },
+  {
+    "name": "存档raging标志恢复后禁止积攒，变身结束后恢复",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 100, "normalHit": 2, "maxGainPerSecond": 8 } },
+      { "op": "restore", "value": { "version": 1, "current": 6, "pending": false, "raging": true },
+        "expect": { "current": 6, "raging": true, "pending": false, "ready": false } },
+      { "op": "eligible", "value": true, "expect": { "ready": false, "current": 6 } },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 0, "current": 6 } },
+      { "op": "raging", "value": false, "expect": { "raging": false, "current": 6 } },
+      { "op": "gain", "t": 1.0, "kind": "Normal", "actor": 2, "source": 72,
+        "expect": { "awarded": 2, "current": 8 } }
+    ]
+  },
+  {
+    "name": "spec_gap_外部变身周期结束后不得残留pending",
+    "desc": "契约：一次完整变身周期（进入再退出）后启动请求不得残留，否则 ready 恒为 false，玩家既不能积攒也不能再次触发。当前实现 SetRaging() 不清理 pending_，本用例预期失败。",
+    "ops": [
+      { "op": "configure", "settings": { "maximum": 4, "normalHit": 4, "maxGainPerSecond": 8 } },
+      { "op": "eligible", "value": true },
+      { "op": "gain", "t": 0.0, "kind": "Normal", "actor": 1, "source": 71,
+        "expect": { "awarded": 4, "becameFull": true } },
+      { "op": "begin", "keep": "t1", "expect": { "hasToken": true, "pending": true } },
+      { "op": "raging", "value": true, "expect": { "raging": true, "ready": false } },
+      { "op": "gain", "t": 0.3, "kind": "Normal", "actor": 2, "source": 72,
+        "expect": { "awarded": 0, "current": 4 } },
+      { "op": "raging", "value": false, "expect": { "raging": false, "pending": false } }
+    ]
+  }
+]

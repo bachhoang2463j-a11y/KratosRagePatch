@@ -1,0 +1,30 @@
+{
+  "rage": {
+    "maximum": 100,
+    "gain": {
+      "normalHit": 2,
+      "powerHit": 2,
+      "specialHit": 2,
+      "receivedHit": 0,
+      "kill": 0
+    },
+    "maxGainPerSecond": 10
+  },
+  "hud": {
+    "x": 80,
+    "y": 650,
+    "width": 180,
+    "height": 9,
+    "fillColor": 12728377,
+    "readyColor": 15646021,
+    "alpha": 90,
+    "outOfCombatDelay": 3.0,
+    "fadeDuration": 0.4
+  },
+  "feedback": {
+    "deniedFlashDuration": 0.35,
+    "deniedInterval": 0.5,
+    "fullGlowEnabled": true,
+    "fullGlowDuration": 1.0
+  }
+}

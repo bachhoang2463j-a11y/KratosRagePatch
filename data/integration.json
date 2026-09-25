@@ -1,0 +1,870 @@
+{
+  "description": "Integration facts read out of the original 'God of War.esp' mod and the game masters. This file is the audit record for the two interfaces the patch touches: the PayloadInterpreter $SIBADA payload (activation path) and the hit classification the native DLL uses. Every form below was resolved with Mutagen (tools/PluginBuilder analyze); tests/test_package.py re-checks this file against build/PluginBuilder/record-report.json so the two cannot drift.",
+  "generatedFrom": {
+    "analyzer": "tools/PluginBuilder analyze",
+    "recordReport": "build/PluginBuilder/record-report.json",
+    "payloadInterpreterConfig": "斧头God of War Kratos Combat MCO/SKSE/PayloadInterpreter/Config/God of War4.ini",
+    "oarReport": "build/PluginBuilder/oar-report.json"
+  },
+  "originalMod": "斧头God of War Kratos Combat MCO",
+  "originalPlugin": "God of War.esp",
+  "patchPlugin": "KratosRagePatch.esp",
+  "activationRequest": {
+    "spell": "0x804 KR_ActivationRequestSpell (Spell/FireAndForget/Self, cost 0, effect 0x805 for 1 s)",
+    "effect": "0x805 KR_ActivationRequestEffect (Script marker; TESMagicEffectApplyEvent is the native entry point)",
+    "readyMarker": "0x803 KR_RageReadyEffect (constant self marker of ability 0x802; the OAR <submod>Ready gate tests this)",
+    "payloadName": "$SIBADA",
+    "payloadConfig": "SKSE/PayloadInterpreter/Config/God of War4.ini",
+    "writtenPayload": "$SIBADA = @CAST|0x804|KratosRagePatch.esp|1|1|1|0|0|0|0|0|0",
+    "rule": "PI's @CAST payload resolves to CastSpellImmediate. The patch adds the request cast, keeps the castable Ability payloads 0X817 and 0X844 byte-for-byte (their parameters are part of the original behaviour and must not be dropped or repurposed), and only the payload whose form is not a spell at all (the MGEF 0X201DF97) is not applied. Comments and every other line stay byte-identical (tools/generate_oar.py)."
+  },
+  "originalPayloads": [
+    {
+      "line": 33,
+      "raw": "$SIBADA = @CAST|0X2FFD2|Skyrim.esm|1|1|0|0|0|0|0|0|0",
+      "active": true,
+      "action": "@CAST",
+      "requestedForm": "Skyrim.esm:0x2FFD2",
+      "piFormToken": "0X2FFD2",
+      "resolvedRecordType": "SPEL",
+      "editorID": "crGiantStomp",
+      "name": "Giant Stomp",
+      "realType": "Spell",
+      "castType": "FireAndForget",
+      "targetType": "Touch",
+      "baseCost": 0,
+      "effectCount": 1,
+      "patchAction": "replacedByRequestCast",
+      "note": "Vanilla touch-range stagger, cast on self by the payload."
+    },
+    {
+      "line": 34,
+      "raw": "$SIBADA = @CAST|0X817|God of War.esp|1|1|0|0|0|0|0|0|0",
+      "active": true,
+      "action": "@CAST",
+      "requestedForm": "God of War.esp:0x817",
+      "piFormToken": "0X817",
+      "resolvedRecordType": "SPEL",
+      "editorID": "EmptyhandedabilityDUPLICATE001",
+      "name": "切换空手",
+      "realType": "Ability",
+      "castType": "FireAndForget",
+      "targetType": "Self",
+      "baseCost": 1084,
+      "effectCount": 1,
+      "patchAction": "keptVerbatim",
+      "note": "Ability-type spell. PI's @CAST maps to CastSpellImmediate, which applies ability spells immediately, so this cast is NOT ineffective and must not be dropped as if it were dead. Its real parameters (Spell, FireAndForget cast type, self target, cost 1084, one PeakValueModifier effect on UnarmedDamage magnitude 49) are kept exactly as the original line has them."
+    },
+    {
+      "line": 35,
+      "raw": "$SIBADA = @CAST|0X844|God of War.esp|1|1|0|0|0|0|0|0|0",
+      "active": true,
+      "action": "@CAST",
+      "requestedForm": "God of War.esp:0x844",
+      "piFormToken": "0X844",
+      "resolvedRecordType": "SPEL",
+      "editorID": "PerkAvoidDeathAbilitywar",
+      "name": "不死之身",
+      "realType": "Ability",
+      "castType": "FireAndForget",
+      "targetType": "Self",
+      "baseCost": 0,
+      "effectCount": 1,
+      "patchAction": "keptVerbatim",
+      "note": "Same shape as 0X817: an Ability applied by CastSpellImmediate, so also NOT ineffective. Real parameters kept verbatim (self, one Script-archetype effect, magnitude 30, duration 20)."
+    },
+    {
+      "line": 36,
+      "raw": "$SIBADA = @CAST|0X814|God of War.esp|1|1|0|100|100|200|200|200|200",
+      "active": true,
+      "action": "@CAST",
+      "requestedForm": "God of War.esp:0x814",
+      "piFormToken": "0X814",
+      "resolvedRecordType": "SPEL",
+      "editorID": "SpartanFuryDUPLICATE001",
+      "name": "斯巴达之怒",
+      "realType": "LesserPower",
+      "castType": "ConstantEffect",
+      "targetType": "Self",
+      "baseCost": 0,
+      "effectCount": 8,
+      "patchAction": "replacedByRequestCast",
+      "note": "The original rage spell (8 effects, first of them MGEF 0x813 SpartanFury). The patch stops casting it directly - the native side owns the activation - so this line is replaced by the request cast."
+    },
+    {
+      "line": 37,
+      "raw": "$SIBADA = @CAST|0X841|God of War.esp|1|1|0|0|0|0|0|0|0",
+      "active": true,
+      "action": "@CAST",
+      "requestedForm": "God of War.esp:0x841",
+      "piFormToken": "0X841",
+      "resolvedRecordType": "SPEL",
+      "editorID": "warcrGiantStomp",
+      "name": "巨型践踏",
+      "realType": "Spell",
+      "castType": "FireAndForget",
+      "targetType": "Touch",
+      "baseCost": 0,
+      "effectCount": 1,
+      "patchAction": "replacedByRequestCast"
+    },
+    {
+      "line": 38,
+      "raw": ";$SIBADA = @CAST|0X201DF90|Dragonborn.esm|1|1|0|0|0|0|0|0|0",
+      "active": false,
+      "action": "@CAST",
+      "requestedForm": null,
+      "piFormToken": "0X201DF90",
+      "loadOrderFormID": "Dragonborn.esm:0x0201DF90",
+      "localFormID": "Dragonborn.esm:0x01DF90",
+      "resolvedRecordType": null,
+      "editorID": null,
+      "realType": null,
+      "castType": null,
+      "targetType": null,
+      "baseCost": null,
+      "effectCount": null,
+      "patchAction": "commentedOut",
+      "note": "Commented out in the original file and left untouched by the patch."
+    },
+    {
+      "line": 39,
+      "raw": "$SIBADA = @CAST|0X201DF97|Dragonborn.esm|1|1|0|0|0|0|0|0|0",
+      "active": true,
+      "action": "@CAST",
+      "requestedForm": "Dragonborn.esm:0x1DF97",
+      "piFormToken": "0X201DF97",
+      "loadOrderFormID": "Dragonborn.esm:0x0201DF97",
+      "resolvedRecordType": "MGEF",
+      "editorID": "DLC2DragonAspectBody01Effect",
+      "name": "Damage Resistance",
+      "realType": "MagicEffect",
+      "castType": "FireAndForget",
+      "targetType": "Self",
+      "baseCost": 0,
+      "effectCount": null,
+      "patchAction": "notAppliedNotCastable",
+      "note": "The form is a magic effect, not a spell, so no cast can apply it. This is the only payload the patch does not apply; it is recorded as-is and must not be upgraded into an added resistance buff."
+    },
+    {
+      "line": 40,
+      "raw": "$SIBADA = @CAST|0X7A82B|Skyrim.esm|1|1|0|0|0|0|0|0|0 overpowered",
+      "active": true,
+      "action": "@CAST",
+      "requestedForm": "Skyrim.esm:0x7A82B",
+      "piFormToken": "0X7A82B",
+      "resolvedRecordType": "SPEL",
+      "editorID": "FireStorm",
+      "name": "Fire Storm",
+      "realType": "Spell",
+      "castType": "FireAndForget",
+      "targetType": "Self",
+      "baseCost": 1426,
+      "effectCount": 4,
+      "patchAction": "replacedByRequestCast",
+      "note": "Self-targeted area spell; the trailing token 'overpowered' is not a payload argument and is preserved verbatim in the original file."
+    },
+    {
+      "line": 41,
+      "raw": ";$SIBADA = @UNAPPLYSPELL|0X83A|God of War.esp",
+      "active": false,
+      "action": "@UNAPPLYSPELL",
+      "requestedForm": null,
+      "piFormToken": "0X83A",
+      "resolvedRecordType": null,
+      "editorID": null,
+      "realType": null,
+      "castType": null,
+      "targetType": null,
+      "baseCost": null,
+      "effectCount": null,
+      "patchAction": "commentedOut",
+      "note": "Commented out in the original file and left untouched by the patch."
+    }
+  ],
+  "originalPayloadSummary": {
+    "activeLines": 7,
+    "commentedLines": 2,
+    "keptVerbatim": [
+      "God of War.esp:0x817",
+      "God of War.esp:0x844"
+    ],
+    "replacedByRequestCast": [
+      "Skyrim.esm:0x2FFD2",
+      "God of War.esp:0x814",
+      "God of War.esp:0x841",
+      "Skyrim.esm:0x7A82B"
+    ],
+    "notCastable": [
+      "Dragonborn.esm:0x1DF97"
+    ],
+    "policy": "PI's @CAST is CastSpellImmediate, which applies Ability-type spells too: 0x817 and 0x844 are castable and their original parameters are kept verbatim, they are never dropped automatically. Only the payload whose form is a MGEF instead of a spell cannot be applied at all, and that one is recorded as-is rather than being turned into an added buff. The remaining active lines are replaced by the single 0x804 request cast, which is how the native side takes over the activation."
+  },
+  "hitChannels": {
+    "role": "The scoring list the native DLL consumes. A form may add rage only when it is listed in scoringWhitelist; the analyzer's automatic hints are kept under candidates for audit and are explicitly NOT authoritative.",
+    "candidates": {
+      "source": "tools/PluginBuilder analyze -> attackCandidates",
+      "note": "Every spell of God of War.esp with the analyzer's automatic channel hint. The automatic rule (no projectile + not applied to others => weapon hit) swept self buffs, barehand-swap abilities and dust visuals into the weapon channel, so this section is reference material only - the curated scoringWhitelist below supersedes it.",
+      "count": 31,
+      "forms": [
+        {
+          "localID": "0x802",
+          "editorID": "BattleSkills",
+          "type": "LesserPower",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 0,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "SubmitWeaponHit"
+        },
+        {
+          "localID": "0x814",
+          "editorID": "SpartanFuryDUPLICATE001",
+          "type": "LesserPower",
+          "castType": "ConstantEffect",
+          "targetType": "Self",
+          "baseCost": 0,
+          "hasProjectile": true,
+          "appliesToOthers": false,
+          "autoHint": "excluded(cloak)"
+        },
+        {
+          "localID": "0x817",
+          "editorID": "EmptyhandedabilityDUPLICATE001",
+          "type": "Ability",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 1084,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "SubmitWeaponHit"
+        },
+        {
+          "localID": "0x81F",
+          "editorID": "war01",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x82B",
+          "editorID": "VoiceFrostBreath312",
+          "type": "Voice",
+          "castType": "FireAndForget",
+          "targetType": "Aimed",
+          "baseCost": 56,
+          "hasProjectile": true,
+          "appliesToOthers": true,
+          "autoHint": "SubmitProjectileHit"
+        },
+        {
+          "localID": "0x82C",
+          "editorID": "EmptyhandedabilityDUPLICATE013",
+          "type": "Ability",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 1084,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "SubmitWeaponHit"
+        },
+        {
+          "localID": "0x840",
+          "editorID": "VoiceUnrelentingForce112",
+          "type": "Voice",
+          "castType": "FireAndForget",
+          "targetType": "Aimed",
+          "baseCost": 2,
+          "hasProjectile": true,
+          "appliesToOthers": true,
+          "autoHint": "SubmitProjectileHit"
+        },
+        {
+          "localID": "0x841",
+          "editorID": "warcrGiantStomp",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 0,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x842",
+          "editorID": "IceStormwar",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Aimed",
+          "baseCost": 144,
+          "hasProjectile": true,
+          "appliesToOthers": true,
+          "autoHint": "SubmitProjectileHit"
+        },
+        {
+          "localID": "0x843",
+          "editorID": "Blizzardwar",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 1106,
+          "hasProjectile": true,
+          "appliesToOthers": false,
+          "autoHint": "SubmitProjectileHit"
+        },
+        {
+          "localID": "0x844",
+          "editorID": "PerkAvoidDeathAbilitywar",
+          "type": "Ability",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 0,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "SubmitWeaponHit"
+        },
+        {
+          "localID": "0x845",
+          "editorID": "DLC2dunKarstaagFrostDamageBoost2war",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 5,
+          "hasProjectile": true,
+          "appliesToOthers": true,
+          "autoHint": "SubmitProjectileHit"
+        },
+        {
+          "localID": "0x847",
+          "editorID": "shanbiqian",
+          "type": "LesserPower",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 0,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "SubmitWeaponHit"
+        },
+        {
+          "localID": "0x848",
+          "editorID": "shanbihou",
+          "type": "LesserPower",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 0,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "SubmitWeaponHit"
+        },
+        {
+          "localID": "0x84E",
+          "editorID": "war021",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x851",
+          "editorID": "war0211",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x853",
+          "editorID": "war02111",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x859",
+          "editorID": "war02112",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x85A",
+          "editorID": "war02113",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x85B",
+          "editorID": "war02114",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x85C",
+          "editorID": "war02115",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x85D",
+          "editorID": "war02116",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x85F",
+          "editorID": "war02117",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x862",
+          "editorID": "war021171",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x867",
+          "editorID": "VoiceUnrelentingForce131",
+          "type": "Voice",
+          "castType": "FireAndForget",
+          "targetType": "Aimed",
+          "baseCost": 2,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x86D",
+          "editorID": "RadagonStaggerwarDUPLICATE002",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": false,
+          "appliesToOthers": true,
+          "autoHint": "SubmitMagicHit"
+        },
+        {
+          "localID": "0x86E",
+          "editorID": "RadagonThrowStarwarDUPLICATE001",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Touch",
+          "baseCost": 1,
+          "hasProjectile": true,
+          "appliesToOthers": true,
+          "autoHint": "SubmitProjectileHit"
+        },
+        {
+          "localID": "0x86F",
+          "editorID": "RadagonThrowwarDUPLICATE002",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 0,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "SubmitWeaponHit"
+        },
+        {
+          "localID": "0x872",
+          "editorID": "HitFog01WAR",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Aimed",
+          "baseCost": 2,
+          "hasProjectile": true,
+          "appliesToOthers": true,
+          "autoHint": "excluded(dust)"
+        },
+        {
+          "localID": "0x874",
+          "editorID": "HitFog02WAR",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 2,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "excluded(dust)"
+        },
+        {
+          "localID": "0x878",
+          "editorID": "HitFogExplWARDUPLICATE001",
+          "type": "Spell",
+          "castType": "FireAndForget",
+          "targetType": "Self",
+          "baseCost": 0,
+          "hasProjectile": false,
+          "appliesToOthers": false,
+          "autoHint": "SubmitWeaponHit"
+        }
+      ]
+    },
+    "scoringWhitelist": {
+      "SubmitMagicHit": {
+        "rule": "the mod's own instant impact spells: FireAndForget, one-shot, applied to the actor the attack lands on (Touch, or Aimed with no projectile), no persistent self-centred area, no self-applied buff, no visuals",
+        "forms": [
+          {
+            "localID": "0x81F",
+            "editorID": "war01",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "left-hit impact (payload $zuoyingzhi01)"
+          },
+          {
+            "localID": "0x841",
+            "editorID": "warcrGiantStomp",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 0,
+            "reason": "ground slam impact (payload $chuidi)"
+          },
+          {
+            "localID": "0x845",
+            "editorID": "DLC2dunKarstaagFrostDamageBoost2war",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 5,
+            "reason": "frost rider applied on the struck actor (payload $hanshuang); touch-range impact, not a self buff"
+          },
+          {
+            "localID": "0x84E",
+            "editorID": "war021",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "right-hit impact (payload $yuoyingzhi01)"
+          },
+          {
+            "localID": "0x851",
+            "editorID": "war0211",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $ZSyingzhi01)"
+          },
+          {
+            "localID": "0x853",
+            "editorID": "war02111",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $feiyingzhi01)"
+          },
+          {
+            "localID": "0x859",
+            "editorID": "war02112",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $Zxyingzhi01)"
+          },
+          {
+            "localID": "0x85A",
+            "editorID": "war02113",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $Styingzhi01)"
+          },
+          {
+            "localID": "0x85B",
+            "editorID": "war02114",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $Xzyingzhi01)"
+          },
+          {
+            "localID": "0x85C",
+            "editorID": "war02115",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $Fkyingzhi01)"
+          },
+          {
+            "localID": "0x85D",
+            "editorID": "war02116",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $feiyingzhi02)"
+          },
+          {
+            "localID": "0x85F",
+            "editorID": "war02117",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $Fkyingzhi02)"
+          },
+          {
+            "localID": "0x862",
+            "editorID": "war021171",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact, 5 s stagger"
+          },
+          {
+            "localID": "0x867",
+            "editorID": "VoiceUnrelentingForce131",
+            "type": "Voice",
+            "castType": "FireAndForget",
+            "targetType": "Aimed",
+            "baseCost": 2,
+            "reason": "shockwave punch (payload $QIquan): Aimed but carries no projectile, so it applies instantly to the actor in front"
+          },
+          {
+            "localID": "0x86D",
+            "editorID": "RadagonStaggerwarDUPLICATE002",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "impact (payload $warchujue)"
+          }
+        ]
+      },
+      "SubmitProjectileHit": {
+        "rule": "one-shot spells the attack launches at the target (Aimed, or Touch that spawns a projectile); a persistent self-centred area does not qualify even though it carries a projectile",
+        "forms": [
+          {
+            "localID": "0x82B",
+            "editorID": "VoiceFrostBreath312",
+            "type": "Voice",
+            "castType": "FireAndForget",
+            "targetType": "Aimed",
+            "baseCost": 56,
+            "reason": "thrown frost wave - VoiceFrostWaveProjectile03 (payload $FrostFlyingAxe)"
+          },
+          {
+            "localID": "0x840",
+            "editorID": "VoiceUnrelentingForce112",
+            "type": "Voice",
+            "castType": "FireAndForget",
+            "targetType": "Aimed",
+            "baseCost": 2,
+            "reason": "air wave - VoicePushProjectile01 (payload $QIBO)"
+          },
+          {
+            "localID": "0x842",
+            "editorID": "IceStormwar",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Aimed",
+            "baseCost": 144,
+            "reason": "launched ice storm - FrostStormProjectile + ParalyzeProjectile (payload $bingxue)"
+          },
+          {
+            "localID": "0x86E",
+            "editorID": "RadagonThrowStarwarDUPLICATE001",
+            "type": "Spell",
+            "castType": "FireAndForget",
+            "targetType": "Touch",
+            "baseCost": 1,
+            "reason": "thrown star - VoiceClearSkiesProjectile03 (payload $warchujue1)"
+          }
+        ]
+      },
+      "SubmitWeaponHit": {
+        "rule": "a spell never arrives as a weapon hit, and God of War.esp owns no weapon forms, so no form of this plugin belongs in this channel",
+        "forms": []
+      }
+    },
+    "excluded": [
+      {
+        "localID": "0x802",
+        "editorID": "BattleSkills",
+        "reason": "selfTargetedScriptController",
+        "note": "LesserPower self spell with a Script archetype: the moveset driver, not an impact"
+      },
+      {
+        "localID": "0x814",
+        "editorID": "SpartanFuryDUPLICATE001",
+        "reason": "cloak",
+        "note": "the rage spell itself, applied by the activation path, never counted as a hit"
+      },
+      {
+        "localID": "0x817",
+        "editorID": "EmptyhandedabilityDUPLICATE001",
+        "reason": "barehandSwapSelfBuff",
+        "note": "切换空手: swapping to unarmed, an Ability applied to the player"
+      },
+      {
+        "localID": "0x82C",
+        "editorID": "EmptyhandedabilityDUPLICATE013",
+        "reason": "selfBuff",
+        "note": "unarmed damage Ability (PeakValueModifier on UnarmedDamage)"
+      },
+      {
+        "localID": "0x843",
+        "editorID": "Blizzardwar",
+        "reason": "persistentSelfCentredArea",
+        "note": "暴风雪: Self target with SpawnHazard + Paralysis over 10 s. Carrying a projectile is not enough to make it a projectile hit - it is a sustained storm centred on the caster"
+      },
+      {
+        "localID": "0x844",
+        "editorID": "PerkAvoidDeathAbilitywar",
+        "reason": "selfBuff",
+        "note": "Ability applied to the player"
+      },
+      {
+        "localID": "0x847",
+        "editorID": "shanbiqian",
+        "reason": "selfBuff",
+        "note": "dodge buff (闪避前), self LesserPower"
+      },
+      {
+        "localID": "0x848",
+        "editorID": "shanbihou",
+        "reason": "selfBuff",
+        "note": "dodge buff (闪避后), self LesserPower"
+      },
+      {
+        "localID": "0x86F",
+        "editorID": "RadagonThrowwarDUPLICATE002",
+        "reason": "selfTargetedScriptController",
+        "note": "self-targeted Script/ValueModifier controller of the throw, no impact on a target"
+      },
+      {
+        "localID": "0x872",
+        "editorID": "HitFog01WAR",
+        "reason": "dust",
+        "note": "visual-only fog spell, no hit credit"
+      },
+      {
+        "localID": "0x874",
+        "editorID": "HitFog02WAR",
+        "reason": "dust",
+        "note": "visual-only fog spell, no hit credit"
+      },
+      {
+        "localID": "0x878",
+        "editorID": "HitFogExplWARDUPLICATE001",
+        "reason": "dust",
+        "note": "hit-fog explosion visual, no hit credit"
+      }
+    ]
+  },
+  "oarAnimationGates": {
+    "referencedForms": [
+      {
+        "requested": "God of War.esp:0x805",
+        "editorID": "LeviathansAxe",
+        "formKey": "000805:God of War.esp",
+        "recordType": "KYWD",
+        "usedBy": "IsEquippedHasKeyword in the moveset conditions"
+      },
+      {
+        "requested": "God of War.esp:0x813",
+        "editorID": "SpartanFury",
+        "formKey": "000813:God of War.esp",
+        "recordType": "MGEF",
+        "archetype": "Script",
+        "castType": "ConstantEffect",
+        "targetType": "Self",
+        "usedBy": "HasMagicEffect gate of the rage and trigger submods"
+      }
+    ],
+    "readyGroups": [
+      {
+        "submod": "SpartanRageTriggerReady",
+        "sourceSubmod": "SpartanRageTrigger",
+        "priority": 70300001,
+        "overrideAnimationsFolder": "SpartanRageTrigger",
+        "conditionsKept": "all 6 original conditions (IsActorBase player, the equipment OR-block, negated God of War.esp 0x813, Keytrace.esp 0x801/0x802/0x804)",
+        "addedCondition": "HasMagicEffect KratosRagePatch.esp 0x803",
+        "gatedAnimations": "the source submod's attack1-10 are disabled by the patch overlay, so those attacks are offered only through this gated group"
+      },
+      {
+        "submod": "BarehandedReady",
+        "sourceSubmod": "Barehanded",
+        "priority": 60100100,
+        "overrideAnimationsFolder": "Barehanded",
+        "conditionsKept": "both original conditions (IsActorBase player, the unarmed equip AND-block)",
+        "addedCondition": "HasMagicEffect KratosRagePatch.esp 0x803",
+        "gatedAnimations": "the source submod's mco_weaponart is disabled by the patch overlay, so the weapon art is offered only through this gated group"
+      },
+      {
+        "submod": "LeviathanAxeReady",
+        "sourceSubmod": "LeviathanAxe",
+        "priority": 45124011,
+        "overrideAnimationsFolder": "LeviathanAxe",
+        "conditionsKept": "both original conditions (IsActorBase player, the axe/keyword equipment OR-block)",
+        "addedCondition": "HasMagicEffect KratosRagePatch.esp 0x803",
+        "gatedAnimations": "the source submod's mco_weaponart is disabled by the patch overlay, so the weapon art is offered only through this gated group"
+      }
+    ],
+    "policy": "The patch never removes an original condition. Each <source>Ready group is a separate submod that copies its source's conditions verbatim (Keytrace hotkeys and equipment included) and appends the patch's 0x803 ready marker as one more AND condition, at the source's own priority, reusing the source's animation folder through overrideAnimationsFolder (no HKX copied). SpartanRageTrigger2 is neither overlaid nor duplicated.",
+    "keytraceGates": [
+      "original SpartanRageTrigger: Keytrace.esp 0x801, 0x802, 0x804 - kept verbatim in SpartanRageTriggerReady",
+      "original SpartanRageTrigger2: Keytrace.esp 0x802, 0x803, 0x804 - untouched by the patch"
+    ]
+  }
+}
