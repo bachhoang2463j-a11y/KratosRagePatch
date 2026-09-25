@@ -7,16 +7,15 @@
 // 设计原则：
 //  * 断言只读真实 GameBridge 产生的可观测副作用（怒气快照、施法日志、spell marker、
 //    mod callback 事件、SKSE 任务队列），fake 不自证、不复写桥接规则。
-//  * 计分的唯一入口是「玩家造成的实际生命伤害」：SubmitPlayerDamage(targetID, baseID,
-//    healthLost) 每事件固定 +2、全体目标共享 1 秒 +10 预算并受 maximum 封顶；与配置的
-//    normalHit/powerHit/...、maxGainPerSecond、敌意、装备、死亡、pending/raging/configured
-//    均无关（只拒绝非有限/非正 healthLost、targetID=0、targetID=玩家）。旧
-//    SubmitWeaponHit/MagicHit/ProjectileHit/IncomingHit/Kill 与死亡事件均已无操作；eligible
-//    只由配置 + 原装备决定，仅限制原释放，不影响积攒。
-//  * 用例按「能抓旧时序缺陷」写：同帧排空后仍必须 pending 且不得回滚；
-//    陈旧请求在 Restore 后不得执行。这两种断言在
-//    「同帧三次重试后立刻回滚」和「Queue 无 generation epoch」的旧实现上会 FAIL。
-//    tools/test_bridge.py --mutant 可实测这一区分能力。
+//  * 0.2.0 起怒气的唯一增长通道是战斗时钟：Papyrus 每 0.5s 单发 TickCombat()，
+//    战斗中每满 1 秒 +2（首 tick 只校准），菜单/暂停不涨也不补时间；脱战或死亡
+//    立即清零并撤 ready/取消 pending。旧 SubmitWeaponHit/MagicHit/ProjectileHit/
+//    IncomingHit/Kill 与 SubmitPlayerDamage 全部无操作。eligible 只由配置 + 原装备
+//    决定，仅限制原释放，不影响积攒。
+//  * 计时基于真实 steady_clock：测试用 ~1.05s 的真实间隔推进心跳（<1.5s 断档阈值，
+//    累计满 1 秒 +2）；>1.5s 的断档必须不补算。
+//  * 用例按「能抓旧时序缺陷」写：同帧排空后仍必须 pending 且不得回滚；陈旧请求在
+//    Restore 后不得执行。tools/test_bridge.py --mutant 可实测这一区分能力。
 // ===========================================================================
 
 #include "Fake.h"
@@ -25,7 +24,6 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
-#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -62,8 +60,6 @@ void CheckEq(long long actual, long long expected, const char* expr, const char*
 #define CHECK(cond) ::CheckTrue(static_cast<bool>(cond), #cond, __FILE__, __LINE__)
 #define CHECK_EQ(actual, expected) \
     ::CheckEq(static_cast<long long>(actual), static_cast<long long>(expected), #actual, __FILE__, __LINE__)
-#define CHECK_NEAR(actual, expected, tol) \
-    ::CheckTrue(std::llabs((actual) - (expected)) <= (tol), #actual " ~= " #expected, __FILE__, __LINE__)
 
 constexpr float kDeniedInterval = 0.5f;
 
@@ -81,49 +77,13 @@ struct Scenario {
     RE::EffectSetting* movement[4]{};     // Keytrace.esp 0x801..0x804
     RE::SpellItem* successCasts[3]{};     // 0x2FFD2 / 0x841 / 0x7A82B
     RE::SpellItem* nativeReapply[2]{};    // 0x817 / 0x844（native 不得重复施放）
-    RE::SpellItem* magicWhitelist{};      // God of War.esp 0x841
-    RE::SpellItem* projectileWhitelist{}; // God of War.esp 0x82B
-    RE::SpellItem* offWhitelist{};        // God of War.esp 0x818（不在审计白名单）
-    RE::SpellItem* incomingSpell{};       // 命中条件的来袭法术（kFireAndForget + kAimed + duration 0）
-    RE::SpellItem* incomingSelfSpell{};   // kSelf → 自施光环，不算直接来袭
-    RE::SpellItem* incomingBenignSpell{}; // 非 hostile/detrimental → 不算直接来袭
-    RE::SpellItem* incomingAuraSpell{};   // kConcentration → 连续施法，不算直接来袭
-    RE::SpellItem* incomingDotSpell{};         // duration=30 且无 NoDuration → 不算直接来袭
-    RE::SpellItem* incomingNoDurationSpell{};  // duration=30 但 MGEF 有 NoDuration → 仍算
     std::vector<RE::Actor*> enemies;
-    RE::Actor* neutral{};                 // 既非敌意也非友军：伤害通道不做敌意判定，应照常计分
-    RE::Actor* teammate{};
-    RE::Actor* summon{};
-    RE::Actor* corpse{};
 };
 
 Scenario& S()
 {
     static Scenario scenario;
     return scenario;
-}
-
-RE::EffectSetting* MakeEffect(int plugin, std::uint32_t localID, bool hostile, bool detrimental)
-{
-    auto* effect = krfake::AddEffect(plugin, localID);
-    using Flag = RE::EffectSetting::EffectSettingData::Flag;
-    if (hostile) {
-        effect->data.flags.set(Flag::kHostile);
-    }
-    if (detrimental) {
-        effect->data.flags.set(Flag::kDetrimental);
-    }
-    effect->data.primaryAV = RE::ActorValue::kHealth;
-    return effect;
-}
-
-void AddSpellEffect(RE::SpellItem* spell, RE::EffectSetting* effect, std::uint32_t duration = 0)
-{
-    // 一次性世界搭建里的小对象，进程内不回收（测试结束即退出）。
-    auto* item = new RE::Effect();
-    item->baseEffect = effect;
-    item->effectItem.duration = duration;
-    spell->effects.push_back(item);
 }
 
 bool BuildWorldOnce()
@@ -172,67 +132,15 @@ bool BuildWorldOnce()
     s.successCasts[1] = krfake::AddSpell(gow, 0x841);
     s.successCasts[2] = krfake::AddSpell(skyrim, 0x7A82B);
 
-    // 审计白名单：magic 通道 + projectile 通道（0x841 同时是结算 payload，沿用同一实例）
-    for (std::uint32_t id : {0x81Fu, 0x845u, 0x84Eu, 0x851u, 0x853u, 0x859u, 0x85Au,
-             0x85Bu, 0x85Cu, 0x85Du, 0x85Fu, 0x862u, 0x867u, 0x86Du}) {
-        krfake::AddSpell(gow, id);
-    }
-    s.magicWhitelist = s.successCasts[1];
-    for (std::uint32_t id : {0x840u, 0x842u, 0x86Eu}) {
-        krfake::AddSpell(gow, id);
-    }
-    s.projectileWhitelist = krfake::AddSpell(gow, 0x82B);
-
-    // native 不得重复施放的原版法术 + 未列入白名单的法术
+    // native 不得重复施放的原版法术
     s.nativeReapply[0] = krfake::AddSpell(gow, 0x817);
     s.nativeReapply[1] = krfake::AddSpell(gow, 0x844);
-    s.offWhitelist = krfake::AddSpell(gow, 0x818);
 
-    // 来袭法术（IsDirectIncomingSpell 判定）
-    s.incomingSpell = krfake::AddSpell(gow, 0x8A0);
-    s.incomingSpell->castingType = RE::MagicSystem::CastingType::kFireAndForget;
-    s.incomingSpell->delivery = RE::MagicSystem::Delivery::kAimed;
-    AddSpellEffect(s.incomingSpell, MakeEffect(gow, 0x8A1, true, true));
-
-    s.incomingSelfSpell = krfake::AddSpell(gow, 0x8A2);
-    s.incomingSelfSpell->castingType = RE::MagicSystem::CastingType::kFireAndForget;
-    s.incomingSelfSpell->delivery = RE::MagicSystem::Delivery::kSelf;
-    AddSpellEffect(s.incomingSelfSpell, MakeEffect(gow, 0x8A3, true, true));
-
-    s.incomingBenignSpell = krfake::AddSpell(gow, 0x8A4);
-    s.incomingBenignSpell->castingType = RE::MagicSystem::CastingType::kFireAndForget;
-    s.incomingBenignSpell->delivery = RE::MagicSystem::Delivery::kAimed;
-    AddSpellEffect(s.incomingBenignSpell, MakeEffect(gow, 0x8A5, false, false));
-
-    // 持续施法（kConcentration，如火焰/治疗类通道法术）不属于当前 kFireAndForget 直接命中边界
-    s.incomingAuraSpell = krfake::AddSpell(gow, 0x8A6);
-    s.incomingAuraSpell->castingType = RE::MagicSystem::CastingType::kConcentration;
-    s.incomingAuraSpell->delivery = RE::MagicSystem::Delivery::kAimed;
-    AddSpellEffect(s.incomingAuraSpell, MakeEffect(gow, 0x8A7, true, true));
-
-    // 持续性 DoT 首次命中：duration > 0 且 MGEF 无 NoDuration → GetDuration() != 0 → 不算直接来袭
-    s.incomingDotSpell = krfake::AddSpell(gow, 0x8A8);
-    s.incomingDotSpell->castingType = RE::MagicSystem::CastingType::kFireAndForget;
-    s.incomingDotSpell->delivery = RE::MagicSystem::Delivery::kAimed;
-    AddSpellEffect(s.incomingDotSpell, MakeEffect(gow, 0x8A9, true, true), 30);
-
-    // duration > 0 但 MGEF 带 NoDuration → Effect::GetDuration() 归零 → 仍算即时直接命中
-    s.incomingNoDurationSpell = krfake::AddSpell(gow, 0x8AA);
-    s.incomingNoDurationSpell->castingType = RE::MagicSystem::CastingType::kFireAndForget;
-    s.incomingNoDurationSpell->delivery = RE::MagicSystem::Delivery::kAimed;
-    auto* noDurationEffect = MakeEffect(gow, 0x8AB, true, true);
-    noDurationEffect->data.flags.set(RE::EffectSetting::EffectSettingData::Flag::kNoDuration);
-    AddSpellEffect(s.incomingNoDurationSpell, noDurationEffect, 30);
-
-    // 玩家 / 敌群 / 友军 / 召唤 / 死体
+    // 玩家 / 敌群
     s.player = krfake::AddPlayer(0x00000014);
     for (int i = 0; i < 8; ++i) {
         s.enemies.push_back(krfake::AddActor(static_cast<RE::FormID>(0x00010000 + i)));
     }
-    s.neutral = krfake::AddActor(0x00020003);
-    s.teammate = krfake::AddActor(0x00020000);
-    s.summon = krfake::AddActor(0x00020001);
-    s.corpse = krfake::AddActor(0x00020002);
 
     kr::GameBridge::Get().Initialize();
     ok = kr::GameBridge::Get().IsAvailable();
@@ -246,19 +154,19 @@ kr::RageSettings ScoreSettings()
 {
     kr::RageSettings settings;
     settings.maximum = 100;
-    settings.normalHit = 2;
-    settings.powerHit = 4;
-    settings.specialHit = 3;
-    settings.receivedHit = 1;
-    settings.kill = 5;
-    settings.maxGainPerSecond = 1000;
+    settings.normalHit = 7;
+    settings.powerHit = 9;
+    settings.specialHit = 11;
+    settings.receivedHit = 13;
+    settings.kill = 15;
+    settings.maxGainPerSecond = 1;   // 战斗时钟不得读它
     return settings;
 }
 
 kr::RageSettings FullSettings()
 {
     kr::RageSettings settings;
-    settings.maximum = 10;
+    settings.maximum = 4;            // 2 秒战斗即可打满，缩短用例墙钟时间
     settings.normalHit = 5;
     settings.powerHit = 6;
     settings.specialHit = 7;
@@ -275,6 +183,7 @@ void EquipAxe()
 }
 
 // 每个用例的共同起点：清副作用日志 + 重置游戏态与桥接态，再按给定配置就绪。
+// 与生产时序对齐：Revert/Restore 后必然有 ReconcileAfterLoad（OnPlayerLoadGame）收口。
 void Start(const kr::RageSettings& settings)
 {
     krfake::ResetScenario();
@@ -282,19 +191,31 @@ void Start(const kr::RageSettings& settings)
     bridge.Revert();
     krfake::DrainAll();
     EquipAxe();
-    for (RE::Actor* enemy : S().enemies) {
-        enemy->hostile = true;
-    }
-    S().teammate->teammate = true;
-    S().summon->commander = S().player;
-    S().corpse->hostile = true;
     bridge.Configure(settings, kDeniedInterval);
+    krfake::DrainAll();
+    bridge.ReconcileAfterLoad();
     krfake::DrainAll();
 }
 
 kr::Snapshot Snap() { return kr::GameBridge::Get().GetSnapshot(); }
 int Current() { return Snap().current; }
 bool MarkerOn() { return S().player->HasSpell(S().readyAbility); }
+
+void SetCombat(bool on) { S().player->inCombat = on; }
+
+// Papyrus 0.5s 单发心跳的测试替身：入队 + 排空。
+void Tick()
+{
+    kr::GameBridge::Get().TickCombat();
+    krfake::DrainAll();
+}
+
+// 真实等待 ms 后打一次心跳。~1050ms 保证单次间隔落在 (0, 1.5s] 内且累计满 1 秒。
+void Advance(int ms)
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    Tick();
+}
 
 // 旧 PEX 兼容入口：均为无操作（保留签名，供旧脚本调用不报错）。
 void WeaponHit(RE::Actor* target, int flags = 0)
@@ -322,16 +243,9 @@ void Kill(RE::Actor* victim)
     kr::GameBridge::Get().SubmitKill(victim, S().player);
     krfake::DrainAll();
 }
-
-// 实际生命伤害入口（0.1.1 起唯一计分通道）。baseID 只是 hook 带来的旁证，接口不据此做任何判定。
 void PlayerDamage(RE::Actor* target, float healthLost = 5.0f)
 {
     kr::GameBridge::Get().SubmitPlayerDamage(target ? target->GetFormID() : 0, 0, healthLost);
-    krfake::DrainAll();
-}
-void PlayerDamageRaw(RE::FormID targetID, RE::FormID baseID, float healthLost)
-{
-    kr::GameBridge::Get().SubmitPlayerDamage(targetID, baseID, healthLost);
     krfake::DrainAll();
 }
 
@@ -351,11 +265,21 @@ void Refresh()
     krfake::DrainAll();
 }
 
-// 让怒气打满到 maximum=10（不触发施法）：伤害通道每事件固定 +2，5 次刚好用满 10/秒预算。
+void FireMenu(bool opening)
+{
+    RE::MenuOpenCloseEvent event;
+    event.menuName = RE::BSFixedString("TestMenu");
+    event.opening = opening;
+    krfake::FireMenuOpenClose(event);
+}
+
+// 进战斗后用 ~1.05s 间隔的心跳把怒气打满到当前上限（不触发施法）。
 void FillRage()
 {
-    for (int i = 0; i < 5; ++i) {
-        PlayerDamage(S().enemies[static_cast<std::size_t>(i)]);
+    SetCombat(true);
+    Tick();   // 首 tick 只校准
+    for (int i = 0; i < 20 && Current() < Snap().maximum; ++i) {
+        Advance(1050);
     }
 }
 
@@ -372,113 +296,136 @@ int SuccessCastTotal()
 // 用例
 // ---------------------------------------------------------------------------
 
-// 1. 伤害通道与配置、装备无关：未 Configure、未装备武器也按实际扣血固定 +2；
-//    未配置时 eligible/ready 仍为假，也不得挂 ready marker。
-void CaseDamageScoresWithoutConfigure()
+// 1. 战斗时钟与配置无关：未 Configure 也按战斗时长 +2/秒；未配置时 eligible/ready
+//    仍为假，也不得挂 ready marker。
+void CaseCombatScoresWithoutConfigure()
 {
     krfake::ResetScenario();
     kr::GameBridge::Get().Revert();
     krfake::DrainAll();
+    EquipAxe();
+    kr::GameBridge::Get().ReconcileAfterLoad();   // 与生产一致：Revert 后 PostLoad/NewGame 必然 reconcile
+    krfake::DrainAll();
 
-    PlayerDamage(S().enemies[0]);
+    SetCombat(true);
+    Tick();                       // 首 tick 校准
+    CHECK_EQ(Current(), 0);
+    Advance(1050);
     CHECK_EQ(Current(), 2);
+
     CHECK(!Snap().eligible);
     CHECK(!Snap().ready);
     CHECK(!MarkerOn());
 }
 
-// 2. 伤害通道固定 +2/事件、+10/秒，与 normalHit/powerHit/... 及 maxGainPerSecond 无关；
-//    配置上限（GetRageMaximum）仍然生效并对外可见。
-void CaseDamageGainIsFixedAndMaximumApplies()
+// 2. 固定 +2/秒，与 normalHit/powerHit/... 及 maxGainPerSecond 无关；配置上限可见。
+void CaseCombatGainIsFixedAndMaximumApplies()
 {
-    kr::RageSettings settings = ScoreSettings();
-    settings.maximum = 100;
-    settings.normalHit = 7;
-    settings.powerHit = 9;
-    settings.specialHit = 11;
-    settings.receivedHit = 13;
-    settings.kill = 15;
-    settings.maxGainPerSecond = 1;   // 若伤害通道仍读它，5 次累计只会有 1 分
-    Start(settings);
-
+    Start(ScoreSettings());       // maxGainPerSecond = 1、hit 值全部刻意异常
     CHECK_EQ(Snap().maximum, 100);
-    CHECK(Snap().eligible);
 
-    PlayerDamage(S().enemies[0]);
+    SetCombat(true);
+    Tick();
+    Advance(1050);
     CHECK_EQ(Current(), 2);
-    PlayerDamage(S().enemies[1]);
+    Advance(1050);
     CHECK_EQ(Current(), 4);
-    PlayerDamage(S().enemies[2]);
-    CHECK_EQ(Current(), 6);
-    PlayerDamage(S().enemies[3]);
-    CHECK_EQ(Current(), 8);
-    PlayerDamage(S().enemies[4]);
-    CHECK_EQ(Current(), 10);          // 每事件 +2，与 normalHit=7 无关
+    Advance(1050);
+    CHECK_EQ(Current(), 6);       // 仍然每秒 +2，与 maxGainPerSecond=1 / normalHit=7 无关
 
-    PlayerDamage(S().enemies[5]);
-    CHECK_EQ(Current(), 10);          // 10/秒 固定预算截断（不是 maxGainPerSecond=1）
-    CHECK_EQ(Snap().maximum, 100);    // GetRageMaximum 仍来自配置
     CHECK_EQ(krfake::Casts().size(), 0);
 }
 
-// 3. 目标筛选只拒玩家与 0；中立/友军/召唤/死者一律允许。非法 healthLost（0/负/NaN/Inf）
-//    必须拒绝且不消耗预算。
-void CaseDamageTargetAndValueValidation()
+// 3. maximum 封顶且 KR_RageBecameFull 只发一次（边沿）。
+void CaseMaximumCapAndBecameFullOnce()
+{
+    Start(FullSettings());        // maximum = 4
+    SetCombat(true);
+    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 0);
+
+    FillRage();
+    CHECK_EQ(Current(), 4);
+    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 1);
+    CHECK(Snap().ready);
+    CHECK(MarkerOn());
+
+    Advance(1050);                // 满怒后继续心跳：封顶且不再发事件
+    Advance(1050);
+    CHECK_EQ(Current(), 4);
+    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 1);
+}
+
+// 4. 非战斗零增长；脱战立即清零并发 KR_RageChanged，此后仍不涨。
+void CaseNoGainAndClearWhenOutOfCombat()
 {
     Start(ScoreSettings());
+    const int changesAtStart = krfake::EventCount("KR_RageChanged");
+
+    Tick();                       // 未进战斗：只校准
+    Advance(1050);
     CHECK_EQ(Current(), 0);
 
-    const float nan = std::numeric_limits<float>::quiet_NaN();
-    const float inf = std::numeric_limits<float>::infinity();
-
-    PlayerDamage(S().neutral);         // 中立（非敌意）允许
+    SetCombat(true);
+    Tick();
+    Advance(1050);
     CHECK_EQ(Current(), 2);
-    PlayerDamage(S().teammate);        // 友军允许
-    CHECK_EQ(Current(), 4);
-    PlayerDamage(S().summon);          // 召唤物允许
-    CHECK_EQ(Current(), 6);
-    S().corpse->dead = true;
-    PlayerDamageRaw(S().corpse->GetFormID(), 0xBEEF, 5.0f);  // 已死/任意 baseID 都不拒绝
-    CHECK_EQ(Current(), 8);
 
-    // 非法输入：全部拒绝，且不得占用 1 秒预算
-    PlayerDamage(S().player);              // targetID = 玩家自身
-    CHECK_EQ(Current(), 8);
-    PlayerDamageRaw(0, 0, 5.0f);           // targetID = 0
-    CHECK_EQ(Current(), 8);
-    PlayerDamage(S().enemies[0], 0.0f);    // 0 伤害
-    CHECK_EQ(Current(), 8);
-    PlayerDamage(S().enemies[0], -1.0f);   // 负伤害
-    CHECK_EQ(Current(), 8);
-    PlayerDamage(S().enemies[0], nan);     // NaN
-    CHECK_EQ(Current(), 8);
-    PlayerDamage(S().enemies[0], inf);     // +Inf
-    CHECK_EQ(Current(), 8);
-    PlayerDamage(S().enemies[0], -inf);    // -Inf
-    CHECK_EQ(Current(), 8);
+    SetCombat(false);
+    Tick();                       // 脱战 tick：清零
+    CHECK_EQ(Current(), 0);
+    CHECK(krfake::EventCount("KR_RageChanged") > changesAtStart);
 
-    PlayerDamage(S().enemies[0]);          // 预算未被动用 → 第 5 次仍 +2
-    CHECK_EQ(Current(), 10);
-    PlayerDamage(S().enemies[1]);          // 第 6 次：1 秒预算已满
-    CHECK_EQ(Current(), 10);
-    CHECK_EQ(krfake::Casts().size(), 0);
+    Advance(1050);
+    CHECK_EQ(Current(), 0);       // 脱战后不涨
+    CHECK(!Snap().ready);
+    CHECK(!MarkerOn());
 }
 
-// 4. 旧 PEX 五个入口与死亡事件都不得计分（无操作 / sink 已移除），只有实际伤害通道生效。
+// 5. 脱战清零的同时取消 pending、撤 ready；脱战后满怒请求不得穿过（不得施法）。
+void CaseLeaveCombatCancelsPendingAndBlocksActivation()
+{
+    Start(FullSettings());
+    FillRage();
+    CHECK(Snap().ready);
+
+    Request805();
+    krfake::RunFrame();
+    CHECK_EQ(krfake::CastCount(S().rageSpell), 1);
+    CHECK(Snap().pending);
+
+    SetCombat(false);
+    Tick();
+    CHECK_EQ(Current(), 0);           // 脱战清零
+    CHECK(!Snap().pending);           // 挂起被取消
+    CHECK(!Snap().ready);
+    CHECK(!MarkerOn());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // 越过 0.25s 施法节流
+    Request805();                     // 非战斗满怒不得穿过
+    krfake::DrainAll();
+    CHECK_EQ(krfake::CastCount(S().rageSpell), 1);
+    CHECK_EQ(SuccessCastTotal(), 0);
+    CHECK_EQ(krfake::EventCount("KR_RageDenied"), 1);
+}
+
+// 6. 旧 PEX 五个入口、死亡事件与旧伤害通道都不得计分（全部无操作），只有战斗时钟生效。
 void CaseLegacyEntriesDoNotScore()
 {
     Start(ScoreSettings());
+    SetCombat(true);
     CHECK_EQ(Current(), 0);
 
     WeaponHit(S().enemies[0]);
-    MagicHit(S().enemies[1], S().magicWhitelist);
-    ProjectileHit(S().enemies[2], S().projectileWhitelist);
-    IncomingHit(S().enemies[3], S().incomingSpell, false);
-    S().enemies[4]->dead = true;
+    MagicHit(S().enemies[1], S().successCasts[1]);
+    ProjectileHit(S().enemies[2], S().successCasts[1]);
+    IncomingHit(S().enemies[3], S().successCasts[1], false);
     Kill(S().enemies[4]);
+    PlayerDamage(S().enemies[5]);
+    PlayerDamage(nullptr);
+    PlayerDamage(S().enemies[6], 0.0f);
+    PlayerDamage(S().enemies[6], -1.0f);
     CHECK_EQ(Current(), 0);
 
-    // 旧 TESDeathEvent sink 已移除：killer = 玩家的死亡事件同样不得计分
     RE::TESDeathEvent death;
     death.actorDying = RE::NiPointer<RE::TESObjectREFR>(S().enemies[5]);
     death.actorKiller = RE::NiPointer<RE::TESObjectREFR>(S().player);
@@ -486,92 +433,63 @@ void CaseLegacyEntriesDoNotScore()
     krfake::FireDeath(death);
     krfake::DrainAll();
     CHECK_EQ(Current(), 0);
-    CHECK_EQ(krfake::Casts().size(), 0);
 
-    // 对照：唯一计分入口仍活着
-    PlayerDamage(S().enemies[0]);
+    // 对照：战斗时钟仍活着
+    Tick();
+    Advance(1050);
     CHECK_EQ(Current(), 2);
-}
-
-// 5. 伤害预算：同一目标立刻 5 次损伤即满 10（无 0.1s 去重），第 6 次为 0；
-//    预算跨目标共享；越过 1 秒窗口后恢复。
-void CaseDamageBudgetSharedPerSecond()
-{
-    Start(ScoreSettings());   // maximum = 100，排除上限干扰
-    CHECK_EQ(Current(), 0);
-
-    for (int i = 0; i < 5; ++i) {
-        PlayerDamage(S().enemies[0]);   // 同一目标连续 5 次，全部计分
-    }
-    CHECK_EQ(Current(), 10);
-
-    PlayerDamage(S().enemies[0]);
-    CHECK_EQ(Current(), 10);            // 第 6 次：1 秒预算已用满 → 0
-
-    PlayerDamage(S().enemies[3]);       // 换目标不换预算 → 仍为 0
-    CHECK_EQ(Current(), 10);
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(1050));
-    PlayerDamage(S().enemies[0]);
-    CHECK_EQ(Current(), 12);            // 窗口滚出后恢复 +2
-
     CHECK_EQ(krfake::Casts().size(), 0);
 }
 
-// 6. maximum 封顶且 KR_RageBecameFull 只发一次；封顶来自配置上限而不是 10/秒预算。
-void CaseMaximumCapAndBecameFullOnce()
+// 7. 菜单/暂停停表且不补时间：短暂停、长断档、UI 暂停与 Main freezeTime 都不产生加分。
+void CaseMenuSuspendDoesNotCatchUp()
 {
-    Start(FullSettings());   // maximum = 10
-    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 0);
+    auto* ui = RE::UI::GetSingleton();
+    auto* main = RE::Main::GetSingleton();
+    Start(ScoreSettings());
+    SetCombat(true);
+    Tick();
+    Advance(1050);
+    CHECK_EQ(Current(), 2);
 
-    for (int i = 0; i < 5; ++i) {
-        PlayerDamage(S().enemies[static_cast<std::size_t>(i)]);
-    }
+    // (a) 短暂停（open/close 事件紧挨着）也不补：close 后首个 tick 只校准
+    FireMenu(true);
+    FireMenu(false);
+    Tick();
+    CHECK_EQ(Current(), 2);
+    Advance(1050);
+    CHECK_EQ(Current(), 4);
+
+    // (b) 长断档（菜单打开挂起 > 1.5s）不得追补
+    FireMenu(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    Tick();
+    CHECK_EQ(Current(), 4);       // 挂起期间的心跳不加分
+    FireMenu(false);
+    Tick();                       // close 后首个 tick 校准
+    CHECK_EQ(Current(), 4);
+    Advance(1050);
+    CHECK_EQ(Current(), 6);
+
+    // (c) UI GameIsPaused 停表
+    ui->paused = true;
+    Advance(1050);
+    CHECK_EQ(Current(), 6);
+    ui->paused = false;
+    Tick();
+    Advance(1050);
+    CHECK_EQ(Current(), 8);
+
+    // (d) Main freezeTime 停表
+    main->freezeTime = true;
+    Advance(1050);
+    CHECK_EQ(Current(), 8);
+    main->freezeTime = false;
+    Tick();
+    Advance(1050);
     CHECK_EQ(Current(), 10);
-    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 1);
 
-    // 越过 1 秒预算窗口后再打，仍被 maximum 封顶：证明封顶不是预算造成的
-    std::this_thread::sleep_for(std::chrono::milliseconds(1050));
-    PlayerDamage(S().enemies[0]);
-    CHECK_EQ(Current(), 10);
-    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 1);
-    CHECK(Snap().ready);
-}
-
-// 7. pending / raging 期间伤害照常计分：挂起（通常已满）与变身中都要能继续攒。
-//    pending 用提升上限制造「挂起但未满」的可观测空间；变身走正常确认提交。
-void CaseDamageScoresDuringPendingAndRaging()
-{
-    Start(FullSettings());   // maximum = 10
-    FillRage();
-    CHECK_EQ(Current(), 10);
-    CHECK(Snap().ready);
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(1050));  // 让伤害预算窗口滚出
-
-    Request805();
-    krfake::DrainAll();
-    CHECK(Snap().pending);
-
-    // 提高上限：Configure 不解除挂起，此刻 pending 且未满，可观测到挂起期间的加怒
-    kr::RageSettings raised = FullSettings();
-    raised.maximum = 100;
-    kr::GameBridge::Get().Configure(raised, kDeniedInterval);
-    krfake::DrainAll();
-    CHECK(Snap().pending);
-    CHECK_EQ(Current(), 10);
-
-    PlayerDamage(S().enemies[0]);
-    CHECK_EQ(Current(), 12);           // pending 期间仍计分
-
-    // 813 落地 → commit：怒气清零、进入变身；10 预算不因 commit 重置
-    krfake::ApplyEffect(S().player, S().rageEffect);
-    Refresh();
-    CHECK(Snap().raging);
-    CHECK_EQ(Current(), 0);
-
-    PlayerDamage(S().enemies[1]);
-    CHECK_EQ(Current(), 2);            // 变身期间仍计分
+    CHECK_EQ(krfake::Casts().size(), 0);
 }
 
 // 8. 打满 + 同步 813（施法即时落效果）→ 只施放一次 814，确认后清零并结算
@@ -579,7 +497,7 @@ void CaseFullOneCastSyncConfirm()
 {
     Start(FullSettings());
     FillRage();
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
     CHECK(MarkerOn());
 
     krfake::OnCastApply(S().rageSpell, S().rageEffect);  // 施放 814 时引擎挂上 813
@@ -608,17 +526,17 @@ void CaseFullOneCastDelayedConfirm()
 {
     Start(FullSettings());
     FillRage();
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
 
     Request805();
     krfake::DrainAll();
     CHECK_EQ(krfake::CastCount(S().rageSpell), 1);
     CHECK_EQ(Snap().pending, true);    // 未确认前必须挂起
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
     CHECK_EQ(SuccessCastTotal(), 0);
 
     krfake::ApplyEffect(S().player, S().rageEffect);  // 效果延迟落下
-    FireEffectEvent(S().player, S().rageEffect);      // 引擎 813 事件（未来实现的即时确认路径）
+    FireEffectEvent(S().player, S().rageEffect);      // 引擎 813 事件
     Refresh();
 
     CHECK_EQ(Snap().pending, false);
@@ -637,7 +555,7 @@ void CasePendingSurvivesSameFrameDrain()
 {
     Start(FullSettings());
     FillRage();
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
 
     Request805();
     const int ran = krfake::DrainAll();
@@ -645,7 +563,7 @@ void CasePendingSurvivesSameFrameDrain()
     CHECK(ran <= 8);
     CHECK_EQ(krfake::CastCount(S().rageSpell), 1);     // 成功施法只有 814
     CHECK_EQ(Snap().pending, true);                    // 同帧排空后必须仍 pending
-    CHECK_EQ(Current(), 10);                           // 怒气不得被扣
+    CHECK_EQ(Current(), 4);                            // 怒气不得被扣
     CHECK_EQ(Snap().raging, false);
     CHECK_EQ(SuccessCastTotal(), 0);
     CHECK_EQ(krfake::EventCount("KR_RageDenied"), 0);  // 不得在同帧内回滚并报拒绝
@@ -654,14 +572,14 @@ void CasePendingSurvivesSameFrameDrain()
 
     Refresh();                                          // deadline 未到 → 仍不得回滚
     CHECK_EQ(Snap().pending, true);
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
     CHECK_EQ(krfake::EventCount("KR_RageDenied"), 0);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(600));
     Refresh();                                          // 越过 0.5s deadline 才回滚
 
     CHECK_EQ(Snap().pending, false);
-    CHECK_EQ(Current(), 10);                            // 失败保留怒气
+    CHECK_EQ(Current(), 4);                             // 失败保留怒气
     CHECK_EQ(Snap().raging, false);
     CHECK_EQ(krfake::CastCount(S().rageSpell), 1);       // 回滚不重施法
     CHECK_EQ(SuccessCastTotal(), 0);
@@ -727,29 +645,7 @@ void CaseNativeDoesNotReapplyOriginals()
     }
 }
 
-// 13. false -> true 满怒事件恰好一次
-void CaseBecameFullEventOnce()
-{
-    Start(FullSettings());
-    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 0);
-
-    for (int i = 0; i < 4; ++i) {
-        PlayerDamage(S().enemies[static_cast<std::size_t>(i)]);   // 每次 +2 → 8，尚未满
-    }
-    CHECK_EQ(Current(), 8);
-    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 0);
-
-    PlayerDamage(S().enemies[4]);              // 第 5 次 +2 → 10，首次满怒
-    CHECK_EQ(Current(), 10);
-    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 1);
-
-    PlayerDamage(S().enemies[5]);              // 满怒后继续受伤：封顶且不再发事件
-    PlayerDamage(S().enemies[6]);
-    CHECK_EQ(Current(), 10);
-    CHECK_EQ(krfake::EventCount("KR_RageBecameFull"), 1);
-}
-
-// 14. 变身期间伤害照常计分；变身结束后继续计分
+// 13. 变身期间战斗时钟照常积攒；变身结束后继续积攒
 void CaseScoringResumesAfterRageEnds()
 {
     Start(FullSettings());
@@ -761,9 +657,8 @@ void CaseScoringResumesAfterRageEnds()
     CHECK(Snap().raging);
     CHECK_EQ(Current(), 0);
 
-    // FillRage 已在本秒用满 10 预算，先越过窗口再验证「变身期间仍计分」
-    std::this_thread::sleep_for(std::chrono::milliseconds(1050));
-    PlayerDamage(S().enemies[2]);
+    Tick();                             // commit 清瞬态计时后的首个 tick 只校准
+    Advance(1050);
     CHECK_EQ(Current(), 2);             // 变身期间也计分
 
     krfake::ClearEffects(S().player);   // 813 结束
@@ -771,22 +666,24 @@ void CaseScoringResumesAfterRageEnds()
     CHECK(!Snap().raging);
     CHECK(Snap().eligible);
 
-    PlayerDamage(S().enemies[3]);
-    CHECK_EQ(Current(), 4);             // 恢复后继续计分
+    Tick();                             // SetRaging 切换清瞬态计时后的校准 tick
+    Advance(1050);
+    CHECK_EQ(Current(), 4);             // 变身结束后继续计分
+    CHECK(Snap().ready);
 }
 
-// 15. 旧会话入队的任务（读档后的 Configure + 遗留的 805 请求）在 Restore 之后必须整体失效
+// 14. 旧会话入队的任务（读档后的 Configure + 遗留的 805 请求）在 Restore 之后必须整体失效
 //     （Queue 无 generation epoch 的旧实现：Configure 先跑使状态重新 ready，旧请求紧接着施放 814
 //      → 本用例在 krfake::CastCount(rageSpell) == 0 上 FAIL）
 void CaseStaleRequestDroppedByRestore()
 {
     Start(FullSettings());
     FillRage();
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
     CHECK(Snap().ready);
 
     const kr::SavedState saved = kr::GameBridge::Get().Save();
-    CHECK_EQ(saved.current, 10);
+    CHECK_EQ(saved.current, 4);
     CHECK_EQ(saved.pending, false);
 
     // 读档完成前的同一帧里已经压入两件事：读档后的 Configure，以及一个旧会话遗留的 805 请求。
@@ -796,11 +693,13 @@ void CaseStaleRequestDroppedByRestore()
 
     kr::GameBridge::Get().Restore(saved);    // 读档：此前入队的一切都必须失效
     krfake::DrainAll();
+    kr::GameBridge::Get().ReconcileAfterLoad();   // 生产时序：读档后必然 reconcile 收口
+    krfake::DrainAll();
 
     CHECK_EQ(krfake::CastCount(S().rageSpell), 0);     // 陈旧请求不得启动施法
     CHECK_EQ(krfake::EventCount("KR_RageDenied"), 0);  // 也不得执行到"拒绝"分支
     CHECK_EQ(SuccessCastTotal(), 0);
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);                            // 战斗存档保留怒气
     CHECK_EQ(Snap().pending, false);
 
     // 守卫不能过宽：Restore 之后重新配置的请求必须照常施法与结算
@@ -817,7 +716,7 @@ void CaseStaleRequestDroppedByRestore()
     CHECK_EQ(SuccessCastTotal(), 3);
 }
 
-// 16. 未确认的挂起请求不得跨存档消耗怒气
+// 15. 未确认的挂起请求不得跨存档消耗怒气
 void CasePendingDoesNotCrossSave()
 {
     Start(FullSettings());
@@ -830,13 +729,13 @@ void CasePendingDoesNotCrossSave()
 
     const kr::SavedState saved = kr::GameBridge::Get().Save();
     CHECK_EQ(saved.pending, true);      // 挂起状态必须写进存档
-    CHECK_EQ(saved.current, 10);
+    CHECK_EQ(saved.current, 4);
 
     kr::GameBridge::Get().Restore(saved);
     kr::GameBridge::Get().ReconcileAfterLoad();
     krfake::DrainAll();
 
-    CHECK_EQ(Current(), 10);            // 旧请求不得跨档扣怒气
+    CHECK_EQ(Current(), 4);             // 旧请求不得跨档扣怒气
     CHECK_EQ(Snap().pending, false);
     CHECK_EQ(Snap().raging, false);
     CHECK_EQ(krfake::CastCount(S().rageSpell), 1);  // 不得重复施放
@@ -855,7 +754,7 @@ void CasePendingDoesNotCrossSave()
     CHECK_EQ(SuccessCastTotal(), 3);
 }
 
-// 17. 三源移动键（方向键或 Keytrace 效果）与拒绝提示的可观测面
+// 16. 三源移动键（方向键或 Keytrace 效果）与拒绝提示的可观测面
 void CaseDeniedNotificationObservable()
 {
     Start(FullSettings());
@@ -882,12 +781,12 @@ void CaseDeniedNotificationObservable()
     CHECK_EQ(krfake::EventCount("KR_RageDenied"), 1);   // 满怒待触发时不再报拒绝
 }
 
-// 18. Revert 同样必须使旧代已入队任务失效（与 15 的 Restore 版对称）
+// 17. Revert 同样必须使旧代已入队任务失效（与 14 的 Restore 版对称）
 void CaseRevertDropsStaleRequest()
 {
     Start(FullSettings());
     FillRage();
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
 
     kr::GameBridge::Get().Configure(FullSettings(), kDeniedInterval);  // 旧代任务
     Request805();                                                      // 旧代请求，尚未执行
@@ -902,7 +801,7 @@ void CaseRevertDropsStaleRequest()
     CHECK(!Snap().eligible);
 }
 
-// 19. 同一次读档里第二次 Reconcile 不得吞掉进行中的激活（needsReconcile_ 守卫）
+// 18. 同一次读档里第二次 Reconcile 不得吞掉进行中的激活（needsReconcile_ 守卫）
 void CaseDuplicateReconcileKeepsPending()
 {
     Start(FullSettings());
@@ -913,11 +812,15 @@ void CaseDuplicateReconcileKeepsPending()
     CHECK_EQ(Snap().pending, true);
     CHECK_EQ(krfake::CastCount(S().rageSpell), 1);
 
-    // 读档流程里的第一次 reconcile：按设计结算掉这次挂起
+    // 读档流程：Restore 置位 needsReconcile_，第一次 reconcile 按设计结算掉这次挂起
+    const kr::SavedState saved = kr::GameBridge::Get().Save();
+    kr::GameBridge::Get().Restore(saved);
     kr::GameBridge::Get().ReconcileAfterLoad();
     krfake::DrainAll();
+    kr::GameBridge::Get().Configure(FullSettings(), kDeniedInterval);   // Restore 清了 configured_
+    krfake::DrainAll();
     CHECK_EQ(Snap().pending, false);
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
     CHECK(Snap().ready);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));  // 越过 0.25s 施法节流
@@ -933,7 +836,7 @@ void CaseDuplicateReconcileKeepsPending()
     CHECK_EQ(Snap().pending, true);
     CHECK_EQ(krfake::CastCount(S().rageSpell), 2);
     CHECK_EQ(krfake::EventCount("KR_RageDenied"), 0);
-    CHECK_EQ(Current(), 10);
+    CHECK_EQ(Current(), 4);
 
     // 若生效则最终仍能正常确认结算
     krfake::ApplyEffect(S().player, S().rageEffect);
@@ -944,37 +847,137 @@ void CaseDuplicateReconcileKeepsPending()
     CHECK_EQ(SuccessCastTotal(), 3);
 }
 
+// 19. 死亡立即结束战斗计时：清零、撤 ready、此后不涨。
+void CaseDeathStopsAndClears()
+{
+    Start(ScoreSettings());
+    SetCombat(true);
+    Tick();
+    Advance(1050);
+    CHECK_EQ(Current(), 2);
+
+    S().player->dead = true;
+    Tick();
+    CHECK_EQ(Current(), 0);           // 死亡视为脱战 → 清零
+    CHECK(!Snap().eligible);
+
+    Advance(1050);
+    CHECK_EQ(Current(), 0);           // 死亡期间不涨
+    CHECK(!Snap().ready);
+    CHECK(!MarkerOn());
+}
+
+// 20. 战斗中存档保留怒气、脱战后存档为 0；读档后按实际战斗状态重拉。
+void CaseSaveRestoresCombatRageOnly()
+{
+    Start(ScoreSettings());
+    SetCombat(true);
+    Tick();
+    Advance(1050);
+    Advance(1050);
+    CHECK_EQ(Current(), 4);
+
+    const kr::SavedState inCombatSave = kr::GameBridge::Get().Save();
+    CHECK_EQ(inCombatSave.current, 4);
+
+    SetCombat(false);
+    Tick();
+    CHECK_EQ(Current(), 0);
+    const kr::SavedState outOfCombatSave = kr::GameBridge::Get().Save();
+    CHECK_EQ(outOfCombatSave.current, 0);
+
+    // 恢复战斗存档（此时在战斗中）：怒气保留并继续按战斗时钟推进
+    SetCombat(true);
+    kr::GameBridge::Get().Restore(inCombatSave);
+    kr::GameBridge::Get().ReconcileAfterLoad();
+    krfake::DrainAll();
+    CHECK_EQ(Current(), 4);
+    Advance(1050);
+    CHECK_EQ(Current(), 4);           // 读档后首个 tick 只校准，不按存档前的时间补算
+    Advance(1050);
+    CHECK_EQ(Current(), 6);           // 之后按真实战斗时长推进
+
+    // 恢复脱战存档：清零
+    SetCombat(false);
+    kr::GameBridge::Get().Restore(outOfCombatSave);
+    kr::GameBridge::Get().ReconcileAfterLoad();
+    krfake::DrainAll();
+    Tick();
+    CHECK_EQ(Current(), 0);
+}
+
+void CaseLoadingAndMissingPlayerPreserveRage()
+{
+    Start(FullSettings());
+    FillRage();
+    auto& bridge = kr::GameBridge::Get();
+    const auto saved = bridge.Save();
+    auto* ui = RE::UI::GetSingleton();
+    ui->loadingMenu = true;
+    SetCombat(false);
+    bridge.Restore(saved);
+    Tick();
+    CHECK_EQ(Current(), 4);
+    Request805();
+    krfake::DrainAll();
+    CHECK_EQ(krfake::CastCount(S().rageSpell), 0);
+    bridge.ReconcileAfterLoad();
+    krfake::DrainAll();
+    CHECK_EQ(Current(), 4);
+    ui->loadingMenu = false;
+    SetCombat(true);
+    bridge.Configure(FullSettings(), kDeniedInterval);
+    krfake::DrainAll();
+    CHECK(Snap().ready);
+    ui->console = true;
+    Request805();
+    krfake::DrainAll();
+    CHECK_EQ(krfake::CastCount(S().rageSpell), 0);
+    ui->console = false;
+    krfake::PlayerSlot() = nullptr;
+    Tick();
+    CHECK_EQ(Current(), 4);
+    krfake::PlayerSlot() = S().player;
+    SetCombat(false);
+    Tick();
+    CHECK_EQ(Current(), 0);
+    CHECK(!MarkerOn());
+}
+
 struct TestCase {
     const char* name;
     void (*fn)();
 };
 
 const TestCase kCases[] = {
-    {"damage_scores_without_configure", &CaseDamageScoresWithoutConfigure},
-    {"damage_gain_fixed_maximum_applies", &CaseDamageGainIsFixedAndMaximumApplies},
-    {"damage_target_and_value_validation", &CaseDamageTargetAndValueValidation},
-    {"legacy_entries_do_not_score", &CaseLegacyEntriesDoNotScore},
-    {"damage_budget_shared_per_second", &CaseDamageBudgetSharedPerSecond},
+    {"combat_scores_without_configure", &CaseCombatScoresWithoutConfigure},
+    {"combat_gain_fixed_maximum_applies", &CaseCombatGainIsFixedAndMaximumApplies},
     {"maximum_cap_and_became_full_once", &CaseMaximumCapAndBecameFullOnce},
-    {"damage_scores_during_pending_and_raging", &CaseDamageScoresDuringPendingAndRaging},
+    {"no_gain_and_clear_when_out_of_combat", &CaseNoGainAndClearWhenOutOfCombat},
+    {"leave_combat_cancels_pending_and_blocks_activation", &CaseLeaveCombatCancelsPendingAndBlocksActivation},
+    {"legacy_entries_do_not_score", &CaseLegacyEntriesDoNotScore},
+    {"menu_suspend_does_not_catch_up", &CaseMenuSuspendDoesNotCatchUp},
     {"full_one_cast_sync_confirm", &CaseFullOneCastSyncConfirm},
     {"full_one_cast_delayed_confirm", &CaseFullOneCastDelayedConfirm},
     {"pending_survives_same_frame_drain", &CasePendingSurvivesSameFrameDrain},
     {"explicit_task_drain", &CaseExplicitTaskDrain},
     {"native_does_not_reapply_originals", &CaseNativeDoesNotReapplyOriginals},
-    {"became_full_event_once", &CaseBecameFullEventOnce},
     {"scoring_resumes_after_rage_ends", &CaseScoringResumesAfterRageEnds},
     {"stale_request_dropped_by_restore", &CaseStaleRequestDroppedByRestore},
     {"pending_does_not_cross_save", &CasePendingDoesNotCrossSave},
     {"denied_notification_observable", &CaseDeniedNotificationObservable},
     {"revert_drops_stale_request", &CaseRevertDropsStaleRequest},
     {"duplicate_reconcile_keeps_pending", &CaseDuplicateReconcileKeepsPending},
+    {"death_stops_and_clears", &CaseDeathStopsAndClears},
+    {"save_restores_combat_rage_only", &CaseSaveRestoresCombatRageOnly},
+    {"loading_and_missing_player_preserve_rage", &CaseLoadingAndMissingPlayerPreserveRage},
 };
 
 }  // namespace
 
 int main()
 {
+    std::cout << std::unitbuf;
     std::cout << "== KratosRagePatch GameBridge mock integration tests ==\n";
     if (!BuildWorldOnce()) {
         std::cout << "world setup failed\n";

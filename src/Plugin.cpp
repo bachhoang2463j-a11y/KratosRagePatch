@@ -1,11 +1,10 @@
-#include "DamageHooks.h"
 #include "GameBridge.h"
 #include <spdlog/sinks/basic_file_sink.h>
 
 extern "C" __declspec(dllexport) constinit SKSE::PluginVersionData SKSEPlugin_Version = [] {
     SKSE::PluginVersionData version;
     version.PluginName("KratosRage");
-    version.PluginVersion({0, 1, 1, 0});
+    version.PluginVersion({0, 2, 0, 0});
     version.AuthorName("KratosRagePatch");
     version.UsesAddressLibrary();
     version.UsesStructsPost629();
@@ -23,7 +22,6 @@ void OnSKSEMessage(SKSE::MessagingInterface::Message* message)
     switch (message->type) {
     case SKSE::MessagingInterface::kDataLoaded:
         kr::GameBridge::Get().Initialize();
-        kr::InstallDamageHooks();
         break;
     case SKSE::MessagingInterface::kNewGame:
         kr::GameBridge::Get().Revert();
@@ -60,6 +58,6 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface*
         return false;
     }
     kr::RegisterSerializationCallbacks();
-    spdlog::info("KratosRage 0.1.1 diagnostic loaded for Skyrim 1.6.640; player damage +2, rolling cap 10/s");
+    spdlog::info("KratosRage 0.2.0 loaded for Skyrim 1.6.640; combat timer +2/s, clear on combat end; damage hooks disabled");
     return true;
 }

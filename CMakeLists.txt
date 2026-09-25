@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(KratosRagePatch VERSION 0.1.1 LANGUAGES CXX)
+project(KratosRagePatch VERSION 0.2.0 LANGUAGES CXX)
 
 option(KR_BUILD_PLUGIN "Build Skyrim native plugin" ON)
 set(CMAKE_CXX_STANDARD 23)
@@ -19,6 +19,7 @@ if(BUILD_TESTING)
         tests/TestMain.cpp
         tests/RageStateTests.cpp
         tests/PlayerDamageTests.cpp
+        tests/CombatTimerTests.cpp
         tests/ActivationTests.cpp
         tests/SerializationTests.cpp)
     target_link_libraries(KratosRageTests PRIVATE KratosRageRules)
@@ -36,7 +37,6 @@ if(KR_BUILD_PLUGIN)
     add_subdirectory(vendor/CommonLibSSE-NG EXCLUDE_FROM_ALL)
     add_library(KratosRage SHARED
         src/Plugin.cpp
-        src/DamageHooks.cpp
         src/GameBridge.cpp
         src/PapyrusBindings.cpp
         src/Serialization.cpp)

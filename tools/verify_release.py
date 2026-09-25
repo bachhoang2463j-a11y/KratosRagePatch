@@ -95,14 +95,13 @@ def audit(archive):
         require(not any(n.lower().endswith((".hkx", ".exe", ".pdb", ".lib", ".bsa")) for n in names),
                 "Unwanted animation, tool or build artifact in ZIP")
         manifest = json.loads(zipped.read(MANIFEST))
-        require(manifest["version"] == "0.1.1" and manifest["runtime"] == "1.6.640"
+        require(manifest["version"] == "0.2.0" and manifest["runtime"] == "1.6.640"
                 and manifest["gameRuntimeTested"] is False, "Wrong release version or runtime claim")
-        require(manifest.get("diagnostic") is True and manifest.get("hudAlwaysVisible") is True
-                and manifest.get("rageGain") == {"perPlayerDamage": 2, "rollingSecondMaximum": 10},
-                "Wrong diagnostic contract")
-        require(manifest.get("uiRevision") == "r1"
-                and manifest.get("hudDisplay") == {"numericReadout": False, "stepPercent": 10,
-                                                  "nonFullMaximumPercent": 90},
+        require(manifest.get("diagnostic") is False and manifest.get("hudAlwaysVisible") is True
+                and manifest.get("rageGain") == {"mode": "combatTimer", "perSecond": 2, "clearOnCombatEnd": True},
+                "Wrong combat timer contract")
+        require(manifest.get("hudDisplay") == {"numericReadout": False, "stepPercent": 10,
+                                               "nonFullMaximumPercent": 90},
                 "Wrong HUD display contract")
         require(manifest["originalFilesUnchanged"] == len(current)
                 and manifest["pluginChecksPassed"] == report["total"], "Manifest verification totals differ")
@@ -133,7 +132,7 @@ def audit(archive):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", type=Path,
-                        default=ROOT / "dist/KratosRagePatch-0.1.1-ui-r1-skyrim-1.6.640.zip")
+                        default=ROOT / "dist/KratosRagePatch-0.2.0-skyrim-1.6.640.zip")
     args = parser.parse_args()
     print(json.dumps(audit(args.archive), ensure_ascii=False, indent=2))
 

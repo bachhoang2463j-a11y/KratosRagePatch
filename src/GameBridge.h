@@ -6,7 +6,8 @@
 namespace kr {
 
 class GameBridge final : public RE::BSTEventSink<RE::TESMagicEffectApplyEvent>,
-                         public RE::BSTEventSink<RE::TESCombatEvent> {
+                         public RE::BSTEventSink<RE::TESCombatEvent>,
+                         public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
     static GameBridge& Get();
     void Initialize();
@@ -14,6 +15,7 @@ public:
     Snapshot GetSnapshot() const;
     void Configure(RageSettings settings, float deniedInterval);
     void RefreshEquipmentState();
+    void TickCombat();
     void SubmitPlayerDamage(RE::FormID targetID, RE::FormID baseID, float healthLost);
     void SubmitWeaponHit(RE::TESObjectREFR* target, RE::TESForm* source, RE::BGSProjectile* projectile, int flags);
     void SubmitMagicHit(RE::TESObjectREFR* target, RE::TESForm* source, RE::BGSProjectile* projectile);
@@ -29,6 +31,7 @@ public:
 
     RE::BSEventNotifyControl ProcessEvent(const RE::TESMagicEffectApplyEvent*, RE::BSTEventSource<RE::TESMagicEffectApplyEvent>*) override;
     RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent*, RE::BSTEventSource<RE::TESCombatEvent>*) override;
+    RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent*, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override;
 
 private:
     struct CastSpec { RE::SpellItem* spell; float effectiveness; float magnitude; bool selfTarget; };
@@ -37,7 +40,8 @@ private:
     bool ResolveForms();
     bool IsAllowedEquipment(RE::Actor*) const;
     bool HasActiveEffect(RE::Actor*, RE::EffectSetting*) const;
-    void AwardPlayerDamage(RE::FormID targetID, RE::FormID baseID, float healthLost);
+    bool IsUISuspended() const;
+    bool IsLoadingTransition() const;
     void UpdateStateFromGame();
     void SyncReadyMarker();
     void RunActivationTransaction();
@@ -55,6 +59,9 @@ private:
     bool configured_{};
     bool needsReconcile_{true};
     bool registered_{};
+    bool menuSinkRegistered_{};
+    bool combatHeartbeatLogged_{};
+    bool observedCombat_{};
     bool markerChanging_{};
     float deniedInterval_{0.5f};
     double lastDenied_{-1000.0};

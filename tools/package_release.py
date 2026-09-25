@@ -82,7 +82,7 @@ def validate_stage():
 def main():
     parser = argparse.ArgumentParser(description='Package the verified independent MO2 patch')
     parser.add_argument('--output', type=Path,
-                        default=ROOT / 'dist/KratosRagePatch-0.1.1-ui-r1-skyrim-1.6.640.zip')
+                        default=ROOT / 'dist/KratosRagePatch-0.2.0-skyrim-1.6.640.zip')
     parser.add_argument('--baseline', type=Path, default=ROOT / 'build/resume-original-sha256.json')
     args = parser.parse_args()
     if args.output.exists():
@@ -93,12 +93,11 @@ def main():
     for dependency in ('CommonLibSSE-NG', 'fmt', 'spdlog', 'rapidcsv'):
         files[f'Docs/KratosRage/licenses/{dependency}.txt'] = (ROOT / 'vendor' / dependency / 'LICENSE').read_bytes()
     manifest = {
-        'version': '0.1.1',
-        'uiRevision': 'r1',
+        'version': '0.2.0',
         'hudDisplay': {'numericReadout': False, 'stepPercent': 10, 'nonFullMaximumPercent': 90},
         'runtime': '1.6.640',
-        'diagnostic': True,
-        'rageGain': {'perPlayerDamage': 2, 'rollingSecondMaximum': 10},
+        'diagnostic': False,
+        'rageGain': {'mode': 'combatTimer', 'perSecond': 2, 'clearOnCombatEnd': True},
         'hudAlwaysVisible': True,
         'gameRuntimeTested': False,
         'originalFilesUnchanged': original_count,

@@ -11,10 +11,10 @@
     "maxGainPerSecond": 10
   },
   "hud": {
-    "x": 80,
-    "y": 650,
-    "width": 180,
-    "height": 9,
+    "x": 105,
+    "y": 710,
+    "width": 96,
+    "height": 4,
     "fillColor": 12728377,
     "readyColor": 15646021,
     "alpha": 90,

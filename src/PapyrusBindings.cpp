@@ -36,6 +36,7 @@ void SubmitKill(RE::StaticFunctionTag*, RE::Actor* victim, RE::Actor* killer)
 }
 
 void RefreshEquipmentState(RE::StaticFunctionTag*) { GameBridge::Get().RefreshEquipmentState(); }
+void TickCombat(RE::StaticFunctionTag*) { GameBridge::Get().TickCombat(); }
 void ReconcileAfterLoad(RE::StaticFunctionTag*) { GameBridge::Get().ReconcileAfterLoad(); }
 void NotifyActivationAttempt(RE::StaticFunctionTag*, std::string control, bool attack,
     bool forward, bool back, bool left, bool right)
@@ -65,6 +66,7 @@ bool RegisterPapyrusFunctions(RE::BSScript::IVirtualMachine* vm)
     vm->RegisterFunction("SubmitIncomingHit", script, SubmitIncomingHit);
     vm->RegisterFunction("SubmitKill", script, SubmitKill);
     vm->RegisterFunction("RefreshEquipmentState", script, RefreshEquipmentState);
+    vm->RegisterFunction("TickCombat", script, TickCombat);
     vm->RegisterFunction("NotifyActivationAttempt", script, NotifyActivationAttempt);
     vm->RegisterFunction("ReconcileAfterLoad", script, ReconcileAfterLoad);
     vm->RegisterFunction("GetRage", script, GetRage);

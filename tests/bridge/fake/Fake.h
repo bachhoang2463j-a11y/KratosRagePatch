@@ -154,9 +154,12 @@ class ActiveEffect;
 class MagicCaster;
 class TESDataHandler;
 class ScriptEventSourceHolder;
+class UI;
+class Main;
 struct TESMagicEffectApplyEvent;
 struct TESDeathEvent;
 struct TESCombatEvent;
+struct MenuOpenCloseEvent;
 
 namespace BSScript {
 class IVirtualMachine;
@@ -622,6 +625,7 @@ class Actor : public TESObjectREFR {
 public:
     // ---- 用例可控的假体状态（fake-only，真实 API 里由引擎维护） ----
     bool dead{};
+    bool inCombat{};
     bool teammate{};
     bool hostile{};
     Actor* commander{};
@@ -630,6 +634,7 @@ public:
     std::vector<SpellItem*> spells;
 
     bool IsDead() const { return dead; }
+    bool IsInCombat() const { return inCombat; }
     bool IsPlayerTeammate() const { return teammate; }
     bool IsHostileToActor(Actor*) const { return hostile; }
     NiPointer<Actor> GetCommandingActor() const { return NiPointer<Actor>(commander); }
@@ -699,6 +704,12 @@ struct TESCombatEvent {
     NiPointer<TESObjectREFR> actor;
 };
 
+// 真实 RE::MenuOpenCloseEvent（RE/U/UIMessage.h 旁）：成员名按真实 header 镜像。
+struct MenuOpenCloseEvent {
+    BSFixedString menuName;
+    bool opening{};
+};
+
 class TESDataHandler {
 public:
     static TESDataHandler* GetSingleton()
@@ -725,6 +736,62 @@ public:
     {
         krfake::SinkList<T>().push_back(sink);
     }
+};
+
+// 真实 RE::UI（RE/U/UI.h）：GameIsPaused / IsItemMenuOpen / IsApplicationMenuOpen /
+// IsModalMenuOpen 均为真实存在的 const 成员；AddEventSink 是模板成员。用例可控开关暴露为成员。
+class UI {
+public:
+    static UI* GetSingleton()
+    {
+        static UI instance;
+        return &instance;
+    }
+
+    template <class T> void AddEventSink(BSTEventSink<T>* sink)
+    {
+        krfake::SinkList<T>().push_back(sink);
+    }
+
+    bool GameIsPaused() const { return paused; }
+    bool IsItemMenuOpen() const { return itemMenu; }
+    bool IsApplicationMenuOpen() const { return appMenu; }
+    bool IsModalMenuOpen() const { return modalMenu; }
+    // 真实签名按名查表；fake 只支持桥接关心的三个名字。
+    bool IsMenuOpen(const BSFixedString& name) const
+    {
+        if (name.text == "Loading Menu") {
+            return loadingMenu;
+        }
+        if (name.text == "Console") {
+            return console;
+        }
+        if (name.text == "Dialogue Menu") {
+            return dialogueMenu;
+        }
+        return false;
+    }
+
+    bool paused{};
+    bool itemMenu{};
+    bool appMenu{};
+    bool modalMenu{};
+    bool loadingMenu{};
+    bool console{};
+    bool dialogueMenu{};
+};
+
+// 真实 RE::Main（RE/M/Main.h）：freezeTime 与 gameActive 是真实存在的 bool 成员。
+class Main {
+public:
+    static Main* GetSingleton()
+    {
+        static Main instance;
+        return &instance;
+    }
+
+    bool freezeTime{};
+    bool gameActive{true};
 };
 
 }  // namespace RE
@@ -899,6 +966,16 @@ inline void FireCombat(const RE::TESCombatEvent& event)
     }
 }
 
+inline void FireMenuOpenClose(const RE::MenuOpenCloseEvent& event)
+{
+    const auto sinks = SinkList<RE::MenuOpenCloseEvent>();
+    for (auto* sink : sinks) {
+        if (sink) {
+            sink->ProcessEvent(&event, nullptr);
+        }
+    }
+}
+
 inline int DrainAll(int maxSteps)
 {
     int ran = 0;
@@ -972,10 +1049,25 @@ inline void ResetScenario()
     Tasks().clear();
     SpinFlag() = false;
 
+    if (auto* ui = RE::UI::GetSingleton()) {
+        ui->paused = false;
+        ui->itemMenu = false;
+        ui->appMenu = false;
+        ui->modalMenu = false;
+        ui->loadingMenu = false;
+        ui->console = false;
+        ui->dialogueMenu = false;
+    }
+    if (auto* main = RE::Main::GetSingleton()) {
+        main->freezeTime = false;
+        main->gameActive = true;
+    }
+
     auto& registry = detail::Reg();
     for (auto& actor : registry.actorOwner) {
         actor->AsMagicTarget()->GetActiveEffectList()->clear();  // 先断开列表，再释放对象
         actor->dead = false;
+        actor->inCombat = false;
         actor->teammate = false;
         actor->hostile = false;
         actor->commander = nullptr;
@@ -986,6 +1078,7 @@ inline void ResetScenario()
     for (auto& player : registry.playerOwner) {
         player->AsMagicTarget()->GetActiveEffectList()->clear();
         player->dead = false;
+        player->inCombat = false;
         player->teammate = false;
         player->hostile = false;
         player->commander = nullptr;

@@ -105,7 +105,11 @@ def run(cmd: list[str], log_path: Path, label: str) -> int:
     with log_path.open("w", encoding="utf-8", errors="replace") as handle:
         handle.write(f"# {label}\n$ {' '.join(cmd)}\n\n")
         handle.flush()
-        completed = subprocess.run(cmd, stdout=handle, stderr=subprocess.STDOUT, cwd=str(ROOT))
+        try:
+            completed = subprocess.run(cmd, stdout=handle, stderr=subprocess.STDOUT, cwd=str(ROOT), timeout=180)
+        except subprocess.TimeoutExpired:
+            handle.write("\nERROR: command exceeded 180 seconds\n")
+            return 124
     return completed.returncode
 
 

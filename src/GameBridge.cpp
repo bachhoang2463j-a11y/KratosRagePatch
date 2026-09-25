@@ -92,6 +92,13 @@ void GameBridge::Initialize()
             registered_ = true;
         }
     }
+    // UI sink 用独立标记：events holder 注册成功而 UI 未就绪时，下次 Initialize 仍会补注册。
+    if (!menuSinkRegistered_) {
+        if (auto* ui = RE::UI::GetSingleton()) {
+            ui->AddEventSink<RE::MenuOpenCloseEvent>(this);
+            menuSinkRegistered_ = true;
+        }
+    }
     spdlog::info("KratosRage records and event sinks initialized");
 }
 
@@ -170,10 +177,21 @@ void GameBridge::UpdateStateFromGame()
     }
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player) {
+        state_.SuspendCombatTimer();
+        return;
+    }
+    // Loading screens can temporarily report an out-of-combat player before the save is ready.
+    if (needsReconcile_ || IsLoadingTransition()) {
+        state_.SuspendCombatTimer();
         return;
     }
     const auto before = state_.GetSnapshot();
     const bool actualRaging = HasActiveEffect(player, rageEffect_);
+    // Do not dispel the original transformation when clearing the combat resource.
+    if (!player->IsInCombat() || player->IsDead()) {
+        activation_.reset();   // EndCombat 会清 pending，激活令牌必须同步作废，防止旧 token 被再认领
+        state_.EndCombat();
+    }
     if (activation_) {
         ConfirmActivation(*activation_);
     }
@@ -183,7 +201,8 @@ void GameBridge::UpdateStateFromGame()
     state_.SetEligible(configured_ && !player->IsDead() && IsAllowedEquipment(player));
     SyncReadyMarker();
     const auto after = state_.GetSnapshot();
-    if (before.eligible != after.eligible || before.raging != after.raging || before.ready != after.ready) {
+    if (before.eligible != after.eligible || before.raging != after.raging || before.ready != after.ready
+        || before.current != after.current) {
         Notify("KR_RageChanged");
     }
 }
@@ -212,45 +231,85 @@ void GameBridge::RefreshEquipmentState()
     Queue([this] { UpdateStateFromGame(); });
 }
 
-// 0.1.1 起唯一计分入口：玩家造成的实际生命伤害。每事件固定 +2，全体目标共享 1 秒 +10
-// 预算，只受 maximum 封顶；与配置的 normalHit/...、maxGainPerSecond、敌意、装备、死亡、
-// pending/raging/configured 均无关。baseID 只是 hook 带来的目标基表旁证，不参与任何判定。
-void GameBridge::SubmitPlayerDamage(RE::FormID targetID, RE::FormID baseID, float healthLost)
+// Papyrus 0.5s 单发心跳：唯一怒气增长通道。战斗中每满 1 秒 +2；菜单/暂停/非战斗
+// 不增长也不补时间；脱战或死亡由 UpdateStateFromGame/UpdateCombat 清零。
+void GameBridge::TickCombat()
 {
-    Queue([this, targetID, baseID, healthLost] { AwardPlayerDamage(targetID, baseID, healthLost); });
+    Queue([this] {
+        if (!available_) {
+            return;
+        }
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        if (!player) {
+            state_.SuspendCombatTimer();
+            return;
+        }
+        const bool inCombat = player->IsInCombat() && !player->IsDead();
+        if (inCombat != observedCombat_) {
+            observedCombat_ = inCombat;
+            spdlog::info(inCombat ? "KratosRage combat heartbeat: player entered combat"
+                                  : "KratosRage combat heartbeat: player left combat, rage cleared");
+        } else if (!combatHeartbeatLogged_) {
+            combatHeartbeatLogged_ = true;
+            spdlog::info("KratosRage combat heartbeat received");
+        }
+        const auto before = state_.GetSnapshot();
+        UpdateStateFromGame();
+        AwardResult result{};
+        if (needsReconcile_ || IsLoadingTransition()) {
+            // 读档/Loading 过渡：权威 combat 尚未拉取，心跳只停表，绝不在此阶段清掉存档怒气。
+            state_.SuspendCombatTimer();
+        } else {
+            result = state_.UpdateCombat(Now(), inCombat, IsUISuspended());
+            if (!inCombat && activation_) {
+                // 双保险：EndCombat 清 pending 时激活令牌必须同步作废。
+                activation_.reset();
+            }
+        }
+        const auto after = state_.GetSnapshot();
+        if (result.awarded > 0 || before.current != after.current) {
+            SyncReadyMarker();
+            Notify("KR_RageChanged");
+        }
+        if (result.becameFull) {
+            spdlog::info("KratosRage rage reached maximum via combat timer");
+            Notify("KR_RageBecameFull");
+        }
+    });
 }
 
-void GameBridge::AwardPlayerDamage(RE::FormID targetID, RE::FormID baseID, float healthLost)
+// UI/暂停判定：任一命中即视为本 tick 不在活跃游戏时间，时钟只停不补。
+bool GameBridge::IsUISuspended() const
 {
-    if (!std::isfinite(healthLost) || healthLost <= 0.0f || targetID == 0) {
-        return;
-    }
-    auto* player = RE::PlayerCharacter::GetSingleton();
-    if (!player || targetID == player->GetFormID()) {
-        return;
-    }
-    UpdateStateFromGame();
-    const auto result = state_.TryAwardPlayerDamage(Now());
-    const auto after = state_.GetSnapshot();
-    if (result.awarded > 0) {
-        spdlog::info("KratosRage player damage scored: target={:08X} base={:08X} healthLost={:.3f} +{} -> {}/{}",
-            targetID, baseID, healthLost, result.awarded, after.current, after.maximum);
-        SyncReadyMarker();
-        Notify("KR_RageChanged");
-    } else if (after.current >= after.maximum) {
-        spdlog::info("KratosRage player damage at maximum: target={:08X} base={:08X} healthLost={:.3f}",
-            targetID, baseID, healthLost);
+    if (auto* ui = RE::UI::GetSingleton()) {
+        if (ui->GameIsPaused() || ui->IsItemMenuOpen() || ui->IsApplicationMenuOpen() || ui->IsModalMenuOpen()
+            || ui->IsMenuOpen("Loading Menu") || ui->IsMenuOpen("Console") || ui->IsMenuOpen("Dialogue Menu")) {
+            return true;
+        }
     } else {
-        spdlog::info("KratosRage player damage suppressed by per-second budget: target={:08X} base={:08X} healthLost={:.3f}",
-            targetID, baseID, healthLost);
+        return true;  // UI 单例缺失时保守停表
     }
-    if (result.becameFull) {
-        Notify("KR_RageBecameFull");
+    if (auto* main = RE::Main::GetSingleton()) {
+        if (main->freezeTime || !main->gameActive) {
+            return true;
+        }
+    } else {
+        return true;
     }
+    return false;
 }
 
-// 0.1.1 起计分只走 SubmitPlayerDamage；以下旧 PEX 入口保留签名供旧脚本调用，全部无操作
-// （避免旧存档事件双计分）。
+// 读档过渡期判定：Loading Menu 打开期间不推进任何战斗状态。
+bool GameBridge::IsLoadingTransition() const
+{
+    auto* ui = RE::UI::GetSingleton();
+    return ui && ui->IsMenuOpen("Loading Menu");
+}
+
+// Legacy entry retained for source and test compatibility; damage hooks are no longer installed.
+void GameBridge::SubmitPlayerDamage(RE::FormID, RE::FormID, float) {}
+
+// 0.2.0 起计分只走 TickCombat 战斗心跳；以下旧 PEX 入口保留签名供旧脚本调用，全部无操作。
 void GameBridge::SubmitWeaponHit(RE::TESObjectREFR*, RE::TESForm*, RE::BGSProjectile*, int) {}
 
 void GameBridge::SubmitMagicHit(RE::TESObjectREFR*, RE::TESForm*, RE::BGSProjectile*) {}
@@ -298,10 +357,12 @@ bool GameBridge::CastLikePayload(const CastSpec& spec)
 
 void GameBridge::RunActivationTransaction()
 {
-    UpdateStateFromGame();
-    if (!available_ || activation_ || Now() - lastActivation_ < 0.25) {
+    // 读档窗口 / Loading / 暂停菜单期间不得用旧 eligible 或旧 marker 启动激活。
+    if (!available_ || activation_ || needsReconcile_ || IsLoadingTransition() || IsUISuspended()
+        || Now() - lastActivation_ < 0.25) {
         return;
     }
+    UpdateStateFromGame();
     const auto token = state_.TryBeginActivation();
     if (!token) {
         if (!state_.GetSnapshot().raging) {
@@ -405,6 +466,8 @@ void GameBridge::Restore(const SavedState& state)
     configured_ = false;
     needsReconcile_ = true;
     ++generation_;
+    combatHeartbeatLogged_ = false;
+    observedCombat_ = false;
     state_.Restore(state);
 }
 
@@ -418,6 +481,8 @@ void GameBridge::Revert()
     activation_.reset();
     lastDenied_ = -1000.0;
     lastActivation_ = -1000.0;
+    combatHeartbeatLogged_ = false;
+    observedCombat_ = false;
 }
 
 RE::BSEventNotifyControl GameBridge::ProcessEvent(const RE::TESMagicEffectApplyEvent* event,
@@ -444,7 +509,19 @@ RE::BSEventNotifyControl GameBridge::ProcessEvent(const RE::TESCombatEvent* even
     RE::BSTEventSource<RE::TESCombatEvent>*)
 {
     if (event && event->actor.get() == RE::PlayerCharacter::GetSingleton()) {
-        Queue([this] { UpdateStateFromGame(); Notify("KR_RageChanged"); });
+        Queue([this] { UpdateStateFromGame(); });
+    }
+    return RE::BSEventNotifyControl::kContinue;
+}
+
+// 任何菜单的打开或关闭都把战斗时钟的起点抹掉：短暂暂停也不产生可补算的间隔。
+// 只在锁内停表，不捕获事件指针入队。
+RE::BSEventNotifyControl GameBridge::ProcessEvent(const RE::MenuOpenCloseEvent* event,
+    RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
+{
+    if (event) {
+        std::lock_guard lock(mutex_);
+        state_.SuspendCombatTimer();
     }
     return RE::BSEventNotifyControl::kContinue;
 }

@@ -125,6 +125,57 @@ AwardResult RageState::TryAwardPlayerDamage(double nowSeconds)
     return {award, !wasFull && current_ >= settings_.maximum};
 }
 
+AwardResult RageState::UpdateCombat(double nowSeconds, bool inCombat, bool suspended)
+{
+    if (!inCombat) {
+        EndCombat();
+        return {};
+    }
+    if (suspended || !std::isfinite(nowSeconds)) {
+        SuspendCombatTimer();
+        return {};
+    }
+    if (!lastCombatTime_) {
+        lastCombatTime_ = nowSeconds;
+        return {};
+    }
+    const double elapsed = nowSeconds - *lastCombatTime_;
+    lastCombatTime_ = nowSeconds;
+    // A stalled heartbeat cannot establish how much of the gap was active gameplay.
+    if (elapsed < 0.0 || elapsed > 1.5) {
+        combatSeconds_ = 0.0;
+        return {};
+    }
+    if (current_ >= settings_.maximum) {
+        combatSeconds_ = 0.0;
+        return {};
+    }
+    combatSeconds_ += elapsed;
+    const int seconds = static_cast<int>(std::floor(combatSeconds_ + 0.000001));
+    if (seconds <= 0) {
+        return {};
+    }
+    combatSeconds_ = std::max(0.0, combatSeconds_ - seconds);
+    const int award = std::min(seconds * 2, settings_.maximum - current_);
+    current_ += award;
+    loadClampSource_.reset();
+    return {award, current_ >= settings_.maximum};
+}
+
+void RageState::SuspendCombatTimer()
+{
+    lastCombatTime_.reset();
+}
+
+void RageState::EndCombat()
+{
+    current_ = 0;
+    pending_.reset();
+    restoredPending_ = false;
+    loadClampSource_.reset();
+    ClearTransient();
+}
+
 std::optional<std::uint64_t> RageState::TryBeginActivation()
 {
     if (!GetSnapshot().ready) {
@@ -211,6 +262,8 @@ void RageState::ReconcileAfterLoad(bool actualRaging)
 
 void RageState::ClearTransient()
 {
+    lastCombatTime_.reset();
+    combatSeconds_ = 0.0;
     gains_.clear();
     hits_.clear();
     lastTime_.reset();

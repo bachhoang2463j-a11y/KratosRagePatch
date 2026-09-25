@@ -407,17 +407,16 @@ class TestNativeCrossFileConsistency(unittest.TestCase):
     def local_id(requested_form):
         return int(requested_form.rsplit("x", 1)[1], 16)
 
-    def test_diagnostic_entry_scores_only_actual_player_damage(self):
+    def test_combat_timer_is_the_only_production_gain_source(self):
         text = self.native()
         self.assertNotIn("specialSources_", text)
         self.assertNotIn("IsEligibleOpponent", text)
         self.assertNotIn("state_.TryAward(", text)
-        self.assertIn("state_.TryAwardPlayerDamage(Now())", text)
-        submitted = text.split("void GameBridge::SubmitPlayerDamage(", 1)[1].split(
-            "void GameBridge::", 1)[0]
-        self.assertIn("Queue(", submitted)
-        self.assertIn("AwardPlayerDamage(targetID, baseID, healthLost)", submitted)
-        for legacy in ("SubmitWeaponHit", "SubmitMagicHit", "SubmitProjectileHit",
+        self.assertNotIn("state_.TryAwardPlayerDamage(", text)
+        self.assertIn("state_.UpdateCombat(", text)
+        self.assertIn("void GameBridge::TickCombat()", text)
+        self.assertIn("IsInCombat()", text)
+        for legacy in ("SubmitPlayerDamage", "SubmitWeaponHit", "SubmitMagicHit", "SubmitProjectileHit",
                        "SubmitIncomingHit", "SubmitKill"):
             match = re.search(rf"void GameBridge::{legacy}\([^)]*\)\s*\{{([^}}]*)\}}", text)
             self.assertIsNotNone(match, f"missing legacy ABI entry: {legacy}")
@@ -425,8 +424,9 @@ class TestNativeCrossFileConsistency(unittest.TestCase):
             self.assertEqual(body, "", f"{legacy} must not award or queue stale hits")
         alias = (REPO / "papyrus/KR_PlayerAlias.psc").read_text(encoding="utf-8")
         self.assertNotIn("PO3_Events_Alias.", alias)
-        self.assertIn("kr::InstallDamageHooks();", (REPO / "src/Plugin.cpp").read_text(encoding="utf-8"))
-        self.assertIn("src/DamageHooks.cpp", (REPO / "CMakeLists.txt").read_text(encoding="utf-8"))
+        self.assertNotIn("InstallDamageHooks", (REPO / "src/Plugin.cpp").read_text(encoding="utf-8"))
+        self.assertNotIn("src/DamageHooks.cpp", (REPO / "CMakeLists.txt").read_text(encoding="utf-8"))
+        self.assertIn("KR_Native.TickCombat()", alias)
 
     def test_pi_kept_payloads_are_never_cast_again_by_the_native_success_casts(self):
         kept = {self.local_id(entry["requestedForm"]) for entry in self.payloads("keptVerbatim")}

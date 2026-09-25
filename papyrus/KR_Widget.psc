@@ -19,8 +19,8 @@ Scriptname KR_Widget extends SKI_WidgetBase
 
 ; ==== configured style ===========================================================================
 
-float _width = 180.0
-float _height = 9.0
+float _width = 96.0
+float _height = 4.0
 int _fillColor = 12728377
 int _readyColor = 15646021
 float _opacity = 90.0
@@ -43,8 +43,8 @@ bool _checkArmed = False
 ; shipping visibility policy; nothing else in this script depends on it.
 bool _diagnosticAlwaysOn = True
 
-float Property DefaultX = 80.0 AutoReadOnly
-float Property DefaultY = 650.0 AutoReadOnly
+float Property DefaultX = 105.0 AutoReadOnly
+float Property DefaultY = 710.0 AutoReadOnly
 int Property DefaultFillColor = 12728377 AutoReadOnly
 int Property DefaultReadyColor = 15646021 AutoReadOnly
 

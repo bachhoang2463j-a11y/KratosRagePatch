@@ -4,14 +4,11 @@ Scriptname KR_PlayerAlias extends ReferenceAlias
 ; Forced player alias (ID 0) of QUST KR_MainQuest (0x800).
 ;
 ; Owns the Papyrus -> native input and lifecycle bridge:
-;   * actual player-caused damage is observed by the native DLL, not PO3 alias events;
+;   * one single-shot heartbeat samples player combat state, without hit-event dependencies;
 ;   * the observed input control reports activation attempts, with the movement state that is
 ;     readable from Papyrus, so the native side can validate without inventing key bindings;
 ;   * equipment changes and save loads re-sync the native snapshot;
-;   * while a rage is active, or a started transformation is still awaiting its confirmation, one
-;     single-shot update keeps handing the native side fresh player state, because neither the end
-;     of the transformation nor the confirmation has an event of its own (see the rage end watch
-;     below).
+;   * the same heartbeat confirms pending activations and observes when rage ends.
 ;
 ; VMAD properties of this alias: Config -> QUST 0x800, Widget -> QUST 0x801, FullGlow -> EFSH 0x806.
 ; This alias also plays the full-rage glow, because it is the script that holds the 0x806 form:
@@ -44,7 +41,11 @@ Event OnAliasInit()
 EndEvent
 
 Event OnPlayerLoadGame()
-	; Registrations do not survive a load; state did (native side) and is reconciled here.
+	; Saved timer deadlines belong to the previous process.
+	UnregisterForUpdate()
+	_rageWatchArmed = False
+	_nextWatchAt = 0.0
+	_watchInitialized = False
 	EnsureBridge()
 
 	if (KR_Native.IsAvailable())
@@ -63,24 +64,17 @@ Event OnPlayerLoadGame()
 		Widget.OnGameReload()
 		Widget.RefreshVisibility()
 	endIf
-
-	; A pending single-shot update does not survive a load, so a stale armed flag has to go and the
-	; end-of-rage watch restarts when the restored state is still raging.
-	_rageWatchArmed = False
-	ArmRageWatch()
 EndEvent
 
 
 ; ==== registration ===============================================================================
 
 Function EnsureBridge()
-	if (!KR_Native.IsAvailable())
-		Debug.Trace("[KR_PlayerAlias] native reports unavailable, skipping bridge registration")
-		return
+	if (KR_Native.IsAvailable())
+		RegisterInputControls()
+		RegisterRageEvents()
 	endIf
-
-	RegisterInputControls()
-	RegisterRageEvents()
+	ArmRageWatch()
 EndFunction
 
 ; KR_RageBecameFull and KR_RageChanged are emitted by the native bridge (see
@@ -97,7 +91,7 @@ Function RegisterRageEvents()
 EndFunction
 
 Function RegisterPoiEvents()
-	; Saved stacks may still call this entry; damage is now observed by the native DLL.
+	; Retained for saved stacks from old versions; hit events no longer grant rage.
 EndFunction
 
 Function RegisterInputControls()
@@ -173,31 +167,22 @@ Event OnRageBecameFull(string eventName, string strArg, float numArg, Form sende
 EndEvent
 
 
-; ==== rage end watch =============================================================================
+; ==== combat and rage heartbeat ==================================================================
 
-; The native side has to learn when the transformation ends on its own: no hit, no equipment change,
-; no input happens then, so nothing would ever wake the bridge and the rage could stay "active" on
-; the DLL side (and stop accumulating) for good. The same single-shot update also carries a started
-; transformation through its confirmation window: the wait for the original effect to appear is
-; driven from the native side, which needs the re-sync to advance or time out. One single-shot
-; update is armed at a time and it is only re-armed while the native still reports an active rage or
-; an unconfirmed request, so the chain ends by itself. No update is ever pending in any other state:
-; this is not a standing poll, and no second loop exists.
+; Player OnCombatStateChanged is not reliable. Keep one low-frequency chain alive even outside combat.
 float Property RageEndWatchInterval = 0.5 AutoReadOnly
 
 bool _rageWatchArmed = False
+bool _watchInitialized = False
+float _nextWatchAt = 0.0
 
 Function ArmRageWatch()
 	if (_rageWatchArmed)
-		; Exactly one single-shot update may be pending; re-arming would only postpone the check.
-		return
-	endIf
-
-	if (!KR_Native.IsAvailable() || (!KR_Native.IsRaging() && !KR_Native.IsPending()))
 		return
 	endIf
 
 	_rageWatchArmed = True
+	_nextWatchAt = Utility.GetCurrentRealTime() + RageEndWatchInterval
 	RegisterForSingleUpdate(RageEndWatchInterval)
 EndFunction
 
@@ -206,25 +191,25 @@ Event OnRageChanged(string eventName, string strArg, float numArg, Form sender)
 EndEvent
 
 Event OnUpdate()
-	_rageWatchArmed = False
-
-	if (!KR_Native.IsAvailable())
+	float now = Utility.GetCurrentRealTime()
+	if (_rageWatchArmed && now < _nextWatchAt)
+		RegisterForSingleUpdate(_nextWatchAt - now)
 		return
 	endIf
+	_rageWatchArmed = False
 
-	; Hands the native side a fresh look at the live player state. That is how it advances a request
-	; that is still awaiting confirmation, rolls it back once its own timeout has passed, and notices
-	; that the transformation ended without any event of its own.
-	KR_Native.RefreshEquipmentState()
-
-	if (Widget)
-		Widget.RefreshVisibility()
+	if (KR_Native.IsAvailable())
+		if (!_watchInitialized)
+			_watchInitialized = True
+			RegisterInputControls()
+			RegisterRageEvents()
+			if (Config)
+				Config.LoadConfiguration()
+			endIf
+		endIf
+		KR_Native.TickCombat()
 	endIf
-
-	if (KR_Native.IsRaging() || KR_Native.IsPending())
-		; Still active, or still awaiting confirmation: keep the single-shot chain alive.
-		ArmRageWatch()
-	endIf
+	ArmRageWatch()
 EndEvent
 
 

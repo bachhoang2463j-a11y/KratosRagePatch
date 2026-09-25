@@ -22,7 +22,7 @@ Scriptname KR_Native Hidden
 ; KR_Config (file value when present and valid, built-in default otherwise).
 Function ConfigureRage(int maximum, int normalHit, int powerHit, int specialHit, int receivedHit, int kill, int maxGainPerSecond, float deniedInterval) global native
 
-; Outgoing damage of the player. flags is PO3's aiHitFlagMask (OnWeaponHit).
+; Legacy hit entry points remain bound for saves made with older versions; they no longer score.
 Function SubmitWeaponHit(ObjectReference target, Form source, Projectile projectile, int flags) global native
 
 ; Outgoing magic hit of the player (PO3 OnMagicHit).
@@ -36,6 +36,9 @@ Function SubmitIncomingHit(ObjectReference aggressor, Form source, Projectile pr
 
 ; The player killed victim (PO3 OnActorKilled).
 Function SubmitKill(Actor victim, Actor killer) global native
+
+; Samples player combat state on the main thread; the native timer owns all rage gain.
+Function TickCombat() global native
 
 ; The player's equipment changed (OnObjectEquipped / OnObjectUnequipped on the player alias).
 Function RefreshEquipmentState() global native
@@ -62,6 +65,6 @@ bool Function IsEligible() global native
 ; reaches the native side; the native alone decides whether the resource is consumed or rolled back.
 bool Function IsPending() global native
 
-; False when a dependency needed for the full feature set is missing (PO3 events, JSON config).
+; False when the native bridge or the required plugin records are unavailable.
 ; Callers must degrade silently instead of pretending the feature is available.
 bool Function IsAvailable() global native

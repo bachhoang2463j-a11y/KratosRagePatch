@@ -28,15 +28,15 @@ class KratosRageMeter
 		"BarterMode", "TweenMode", "WorldMapMode", "JournalMode", "CartMode", "VATSPlayback"
 	];
 
-	private static var BORDER_ALPHA:Number = 60;
-	private static var BACKGROUND:Number = 0x000000;
-	private static var BORDER:Number = 0x808080;
+	private static var BORDER_ALPHA:Number = 70;
+	private static var BACKGROUND:Number = 0x171C20;
+	private static var BORDER:Number = 0xAAB3BC;
 	private static var FLASH_COLOR:Number = 0xC00000;
 	private static var PULSE_MIN_ALPHA:Number = 55;
 	private static var PULSE_PERIOD_MS:Number = 900;
 
 	// Reported in the single per-load skse.Log line; bump together with the release version.
-	private static var VERSION:String = "0.1.1-ui-r1";
+	private static var VERSION:String = "0.2.0";
 
 	// stage
 	private var _clip:MovieClip;      // "widget": the clip the host talks to
@@ -46,8 +46,8 @@ class KratosRageMeter
 	private var _flash:MovieClip;
 
 	// style / state pushed from Papyrus
-	private var _width:Number = 180;
-	private var _height:Number = 9;
+	private var _width:Number = 96;
+	private var _height:Number = 4;
 	private var _fillColor:Number = 0xC23839;
 	private var _readyColor:Number = 0xEEBD45;
 	private var _alpha:Number = 90;
@@ -260,12 +260,16 @@ class KratosRageMeter
 
 	public function setPercent(a_percent:Number):Void
 	{
+		var displayed:Number = getDisplayPercent();
 		_percent = clamp(a_percent, 0, 1);
-		drawFill();
+		if (displayed != getDisplayPercent())
+			drawFill();
 	}
 
 	public function setReady(a_ready:Boolean):Void
 	{
+		if (_ready == a_ready)
+			return;
 		_ready = a_ready;
 		drawFill();
 
@@ -359,31 +363,31 @@ class KratosRageMeter
 		_flash._alpha = 0;
 	}
 
+	private function drawShape(a_clip:MovieClip, a_x:Number, a_y:Number, a_width:Number, a_height:Number):Void
+	{
+		var bevel:Number = Math.min(a_height, a_width / 4);
+		a_clip.moveTo(a_x + bevel, a_y);
+		a_clip.lineTo(a_x + a_width, a_y);
+		a_clip.lineTo(a_x + a_width - bevel, a_y + a_height);
+		a_clip.lineTo(a_x, a_y + a_height);
+		a_clip.lineTo(a_x + bevel, a_y);
+	}
+
 	private function redraw():Void
 	{
 		_bg.clear();
-		_bg.beginFill(BACKGROUND, 100);
-		_bg.moveTo(0, 0);
-		_bg.lineTo(_width, 0);
-		_bg.lineTo(_width, _height);
-		_bg.lineTo(0, _height);
-		_bg.lineTo(0, 0);
+		_bg.beginFill(0x070A0D, 90);
+		drawShape(_bg, -2, -2, _width + 4, _height + 4);
 		_bg.endFill();
 
+		_bg.beginFill(BACKGROUND, 100);
 		_bg.lineStyle(1, BORDER, BORDER_ALPHA);
-		_bg.moveTo(0, 0);
-		_bg.lineTo(_width, 0);
-		_bg.lineTo(_width, _height);
-		_bg.lineTo(0, _height);
-		_bg.lineTo(0, 0);
+		drawShape(_bg, -1, -1, _width + 2, _height + 2);
+		_bg.endFill();
 
 		_flash.clear();
 		_flash.beginFill(FLASH_COLOR, 100);
-		_flash.moveTo(0, 0);
-		_flash.lineTo(_width, 0);
-		_flash.lineTo(_width, _height);
-		_flash.lineTo(0, _height);
-		_flash.lineTo(0, 0);
+		drawShape(_flash, 0, 0, _width, _height);
 		_flash.endFill();
 
 		drawFill();
@@ -411,11 +415,7 @@ class KratosRageMeter
 
 		var color:Number = _ready ? _readyColor : _fillColor;
 		_fill.beginFill(color, 100);
-		_fill.moveTo(0, 0);
-		_fill.lineTo(fillWidth, 0);
-		_fill.lineTo(fillWidth, _height);
-		_fill.lineTo(0, _height);
-		_fill.lineTo(0, 0);
+		drawShape(_fill, 0, 0, fillWidth, _height);
 		_fill.endFill();
 	}
 
@@ -513,6 +513,9 @@ class KratosRageMeter
 		}
 		_clip._x = lerp(-_hudMetrics.hMin, _hudMetrics.hMax, 0, 1280, _posX);
 		_clip._y = lerp(-_hudMetrics.vMin, _hudMetrics.vMax, 0, 720, _posY);
+		// Keep the two-unit frame inside the safe HUD span, including anchor offsets.
+		_clip._x = clamp(_clip._x, -_hudMetrics.hMin - _holder._x + 3, _hudMetrics.hMax - _holder._x - _width - 3);
+		_clip._y = clamp(_clip._y, -_hudMetrics.vMin - _holder._y + 3, _hudMetrics.vMax - _holder._y - _height - 3);
 	}
 
 	private function hasMetrics():Boolean

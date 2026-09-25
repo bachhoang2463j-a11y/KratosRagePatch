@@ -75,7 +75,7 @@ EXPECTED_FUNCTIONS = {
         "ConfigureRage", "SubmitWeaponHit", "SubmitMagicHit", "SubmitProjectileHit",
         "SubmitIncomingHit", "SubmitKill", "RefreshEquipmentState", "NotifyActivationAttempt",
         "ReconcileAfterLoad", "GetRage", "GetRageMaximum", "IsRaging", "IsReady", "IsEligible",
-        "IsAvailable", "IsPending",
+        "IsAvailable", "IsPending", "TickCombat",
     ],
     "KR_Widget": [
         "OnInit", "OnGameReload", "OnWidgetInit", "OnWidgetReset", "GetWidgetSource",
@@ -125,7 +125,7 @@ EXPECTED_STRINGS = {
         "KR_RageBecameFull", "OnGameReload", "AllowFullFeedback", "ident(Stop)", "ident(Play)",
         # end-of-rage watch: exactly one single-shot update while a rage is active, or while a
         # started transformation is still unconfirmed
-        "RefreshEquipmentState", "RegisterForSingleUpdate", "IsRaging", "IsPending",
+        "RefreshEquipmentState", "RegisterForSingleUpdate", "TickCombat", "_nextWatchAt",
     ],
 }
 

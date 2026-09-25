@@ -171,8 +171,8 @@ function makeMeter(source) {
         _vAnchor: 'top',
         _posX: 0,
         _posY: 0,
-        _width: 180,
-        _height: 9,
+        _width: 96,
+        _height: 4,
         _fillColor: 0xC23839,
         _readyColor: 0xEEBD45,
         _percent: 0,
@@ -187,6 +187,10 @@ function makeMeter(source) {
     meter.VERSION = extractStaticLiteral(source, 'VERSION');
     meter.PULSE_PERIOD_MS = extractStaticLiteral(source, 'PULSE_PERIOD_MS');
     meter.PULSE_MIN_ALPHA = extractStaticLiteral(source, 'PULSE_MIN_ALPHA');
+    meter.BORDER_ALPHA = extractStaticLiteral(source, 'BORDER_ALPHA');
+    meter.BACKGROUND = extractStaticLiteral(source, 'BACKGROUND');
+    meter.BORDER = extractStaticLiteral(source, 'BORDER');
+    meter.FLASH_COLOR = extractStaticLiteral(source, 'FLASH_COLOR');
 
     let clock = 0;
     meter.getTimer = () => clock;
@@ -197,6 +201,7 @@ function makeMeter(source) {
         'tweenTo', 'onTweenDone', 'setHudMetrics', 'setValue', 'getDisplayPercent', 'createStage',
         'setModes', 'clearHolderModeFlags', 'applyModeVisibility', 'currentHudMode', 'resolveMode',
         'onModeChange', 'setPercent', 'setReady', 'drawFill', 'redraw', 'startPulse', 'stopPulse',
+        'drawShape', 'setHAnchor',
     ].forEach((name) => compileMethod(meter, name, source));
 
     // onModeChange delegates to applyModeVisibility; wire the real body.
@@ -395,7 +400,7 @@ for (const testCase of METRIC_CASES) {
     const meter = makeMeter(meterSource);
     const metrics = METRIC_CASES[1].metrics;
     meter.setHudMetrics(metrics);
-    check('T5 metrics log line', meter.logs.length === 1 && /\b0\.1\.1\b/.test(meter.logs[0]) && /vMax=800/.test(meter.logs[0]),
+    check('T5 metrics log line', meter.logs.length === 1 && /\b0\.2\.0\b/.test(meter.logs[0]) && /vMax=800/.test(meter.logs[0]),
         JSON.stringify(meter.logs));
     check('T5 metrics stored', meter._hudMetrics === metrics);
 
@@ -593,6 +598,175 @@ for (const testCase of METRIC_CASES) {
     check('T9 available branch clamps the percent', /_percent\s*=\s*ClampFloat\(percent/.test(update));
     check('T9 ready still comes from the native side', /_ready\s*=\s*KR_Native\.IsReady\(\)/.test(update));
     check('T9 no per-frame update registration added', !/RegisterForUpdate\(/.test(widgetSource));
+}
+
+// T11 - 0.2.0 default geometry: w96 h4, design position (105, 710) in config + Papyrus + AS,
+// and the SkyUI-mapped position survives the safe-span clamp on 16:9 and 16:10.
+{
+    const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'config.default.json'), 'utf8'));
+    check('T11 config default x is 105', config.hud.x === 105, 'got ' + config.hud.x);
+    check('T11 config default y is 710', config.hud.y === 710, 'got ' + config.hud.y);
+    check('T11 config default size is 96x4', config.hud.width === 96 && config.hud.height === 4);
+    check('T11 papyrus DefaultX is 105', /float\s+Property\s+DefaultX\s*=\s*105\.0/.test(widgetSource));
+    check('T11 papyrus DefaultY is 710', /float\s+Property\s+DefaultY\s*=\s*710\.0/.test(widgetSource));
+    check('T11 AS default width is 96', /var\s+_width:Number\s*=\s*96\s*;/.test(meterSource));
+    check('T11 AS default height is 4', /var\s+_height:Number\s*=\s*4\s*;/.test(meterSource));
+
+    // The real mapping at the shipped default: on both aspect ratios (105, 710) must land the
+    // whole 96x4 strip inside the safe span with the 3px margin respected, i.e. NOT clamped.
+    const positionChecks = [
+        { label: '16:9 identity', metrics: METRIC_CASES[0].metrics },
+        { label: '16:10 logical frame', metrics: METRIC_CASES[1].metrics },
+    ];
+    for (const pc of positionChecks) {
+        const meter = makeMeter(meterSource);
+        meter._hudMetrics = pc.metrics;
+        meter.setPositionX(105);
+        meter.setPositionY(710);
+        const expectedMapX = expectedX(pc.metrics, 105);
+        const expectedMapY = expectedY(pc.metrics, 710);
+        const clampMinX = -pc.metrics.hMin + 3;
+        const clampMaxX = pc.metrics.hMax - 96 - 3;
+        const clampMinY = -pc.metrics.vMin + 3;
+        const clampMaxY = pc.metrics.vMax - 4 - 3;
+        check('T11 ' + pc.label + ' default x follows the SkyUI mapping unclamped',
+            near(meter._clip._x, expectedMapX) && expectedMapX >= clampMinX && expectedMapX <= clampMaxX,
+            'got ' + meter._clip._x + ' expected ' + expectedMapX + ' span [' + clampMinX + ', ' + clampMaxX + ']');
+        check('T11 ' + pc.label + ' default y follows the SkyUI mapping unclamped',
+            near(meter._clip._y, expectedMapY) && expectedMapY >= clampMinY && expectedMapY <= clampMaxY,
+            'got ' + meter._clip._y + ' expected ' + expectedMapY + ' span [' + clampMinY + ', ' + clampMaxY + ']');
+    }
+
+    // The clamp itself: push the strip past the safe span and the real updatePosition pulls it
+    // back to the 3px margin, including the anchor offset the holder contributes.
+    {
+        const meter = makeMeter(meterSource);
+        meter._hudMetrics = METRIC_CASES[0].metrics; // 0..1280 / 0..720
+        meter.setPositionX(1279);
+        check('T11 right overflow clamps to hMax - width - 3',
+            near(meter._clip._x, 1280 - 96 - 3), 'got ' + meter._clip._x);
+        meter.setPositionY(719);
+        check('T11 bottom overflow clamps to vMax - height - 3',
+            near(meter._clip._y, 720 - 4 - 3), 'got ' + meter._clip._y);
+        meter.setPositionX(1);
+        check('T11 left overflow clamps to hMin + 3', near(meter._clip._x, 3), 'got ' + meter._clip._x);
+
+        // Center anchor shifts the holder by -width/2; the clamp bound must compensate for it.
+        meter.setHAnchor('center');
+        check('T11 center anchor offsets the holder', near(meter._holder._x, -48), 'got ' + meter._holder._x);
+        meter.setPositionX(1);
+        check('T11 left clamp compensates the holder offset',
+            near(meter._clip._x, -meter._holder._x + 3), 'got ' + meter._clip._x);
+    }
+}
+
+// T12 - setPercent redraws only when the 10% display step actually changes.
+{
+    const meter = makeMeter(meterSource);
+    meter.createStage();
+    check('T12 fresh stage draws nothing', meter._fill.ops.length === 0);
+
+    drawAt(meter, 0.11); // display step 0.2
+    const opsAfterFirst = meter._fill.ops.length;
+    check('T12 first push in a step draws', opsAfterFirst > 0);
+
+    meter.setPercent(0.15); // same display step 0.2
+    check('T12 same-step push does not redraw', meter._fill.ops.length === opsAfterFirst,
+        'got ' + meter._fill.ops.length + ' expected ' + opsAfterFirst);
+
+    meter.setPercent(0.21); // display step 0.3
+    check('T12 step change redraws', meter._fill.ops.length > opsAfterFirst);
+
+    meter.setPercent(0.29); // still 0.3
+    const opsAfterStep = meter._fill.ops.length;
+    meter.setPercent(0.25);
+    check('T12 same-step push again does not redraw', meter._fill.ops.length === opsAfterStep);
+
+    // Raw percent is still kept even when no redraw happened.
+    check('T12 raw percent kept across same-step pushes', near(meter._percent, 0.25, 1e-12),
+        'got ' + meter._percent);
+}
+
+// T13 - setReady is a no-op while readiness does not change: no redraw, no pulse restart.
+{
+    const meter = makeMeter(meterSource);
+    meter.createStage();
+    drawAt(meter, 0.5);
+    meter.setReady(true);
+    const opsAfterGold = meter._fill.ops.length;
+    const pulseFirst = meter._fill.onEnterFrame;
+    check('T13 setReady(true) pulses', typeof pulseFirst === 'function');
+
+    meter.setReady(true); // unchanged
+    check('T13 unchanged setReady(true) does not redraw', meter._fill.ops.length === opsAfterGold,
+        'got ' + meter._fill.ops.length + ' expected ' + opsAfterGold);
+    check('T13 unchanged setReady(true) does not restart the pulse', meter._fill.onEnterFrame === pulseFirst);
+
+    meter.setReady(false);
+    check('T13 setReady(false) redraws and stops the pulse',
+        meter._fill.ops.length > opsAfterGold && meter._fill.onEnterFrame === undefined);
+}
+
+// T14 - the beveled frame: the background shape extends 2px beyond the fill rect on every side
+// and the bevel cuts adapt to the rectangle (no sharp top-left / bottom-right corners).
+{
+    const meter = makeMeter(meterSource);
+    meter.createStage();
+    meter._percent = 1; // full fill so the fill shape spans the whole strip
+    meter.redraw();
+
+    // Collect the polygon points a stage pass drew into a clip.
+    const pointsOf = (ops) => {
+        const points = [];
+        for (const op of ops)
+            if (op[0] === 'moveTo' || op[0] === 'lineTo')
+                points.push([op[1], op[2]]);
+        return points;
+    };
+    const bounds = (points) => ({
+        minX: Math.min.apply(null, points.map((p) => p[0])),
+        maxX: Math.max.apply(null, points.map((p) => p[0])),
+        minY: Math.min.apply(null, points.map((p) => p[1])),
+        maxY: Math.max.apply(null, points.map((p) => p[1])),
+    });
+
+    const bgPoints = pointsOf(meter._bg.ops);
+    const bgOuter = bounds(bgPoints.slice(0, 5)); // first drawShape pass: the outer silhouette
+    check('T14 frame extends 2px left of the fill', near(bgOuter.minX, -2), JSON.stringify(bgOuter));
+    check('T14 frame extends 2px above the fill', near(bgOuter.minY, -2), JSON.stringify(bgOuter));
+    check('T14 frame extends 2px right of the fill', near(bgOuter.maxX, meter._width + 2), JSON.stringify(bgOuter));
+    check('T14 frame extends 2px below the fill', near(bgOuter.maxY, meter._height + 2), JSON.stringify(bgOuter));
+
+    // Every fill vertex stays strictly inside the outer frame polygon (bounding-box formulation).
+    const fillBounds = bounds(pointsOf(meter._fill.ops));
+    check('T14 fill stays inside the frame horizontally',
+        fillBounds.minX > bgOuter.minX && fillBounds.maxX < bgOuter.maxX, JSON.stringify(fillBounds));
+    check('T14 fill stays inside the frame vertically',
+        fillBounds.minY > bgOuter.minY && fillBounds.maxY < bgOuter.maxY, JSON.stringify(fillBounds));
+
+    // The bevel: width 96, height 4 -> bevel = min(height, width/4) = 4, so the top-left corner
+    // starts at (bevel, 0) and the bottom-right corner ends at (width - bevel, height): the
+    // corners at (0,0) and (width, height) are cut, top-right and bottom-left stay sharp.
+    const fillPoints = pointsOf(meter._fill.ops);
+    const bevel = Math.min(meter._height, meter._width / 4);
+    check('T14 bevel is min(height, width/4)', near(bevel, 4), 'got ' + bevel);
+    check('T14 top-left corner is cut to the bevel',
+        near(fillPoints[0][0], bevel) && near(fillPoints[0][1], 0), JSON.stringify(fillPoints[0]));
+    check('T14 top-right corner stays sharp at (width, 0)',
+        fillPoints.some((p) => near(p[0], meter._width) && near(p[1], 0)), JSON.stringify(fillPoints));
+    check('T14 bottom-right corner is cut to the bevel',
+        fillPoints.some((p) => near(p[0], meter._width - bevel) && near(p[1], meter._height)), JSON.stringify(fillPoints));
+    check('T14 bottom-left corner stays sharp at (0, height)',
+        fillPoints.some((p) => near(p[0], 0) && near(p[1], meter._height)), JSON.stringify(fillPoints));
+    check('T14 shape closes back onto its first vertex',
+        near(fillPoints[fillPoints.length - 1][0], fillPoints[0][0]) &&
+        near(fillPoints[fillPoints.length - 1][1], fillPoints[0][1]), JSON.stringify(fillPoints));
+
+    // The frame's own bevel adapts to its larger rectangle: the outer pass spans
+    // (width+4) x (height+4), so min(height+4, (width+4)/4) governs its cut.
+    const frameBevel = Math.min(meter._height + 4, (meter._width + 4) / 4);
+    check('T14 frame bevel adapts to the frame rectangle', near(bgPoints[0][0], -2 + frameBevel),
+        'got ' + bgPoints[0][0] + ' expected ' + (-2 + frameBevel));
 }
 
 /* ---------------------------------------------------------------------------------------------- */

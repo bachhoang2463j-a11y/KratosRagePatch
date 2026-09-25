@@ -54,6 +54,9 @@ public:
     void SetRaging(bool active);
     AwardResult TryAward(const GainEvent& event, double nowSeconds);
     AwardResult TryAwardPlayerDamage(double nowSeconds);
+    AwardResult UpdateCombat(double nowSeconds, bool inCombat, bool suspended);
+    void EndCombat();
+    void SuspendCombatTimer();
     std::optional<std::uint64_t> TryBeginActivation();
     bool CommitActivation(std::uint64_t token);
     bool AbortActivation(std::uint64_t token);
@@ -87,6 +90,8 @@ private:
     // 实际伤害预算跨变身保留，避免消费怒气后在同一秒重新领取额度。
     std::deque<GainStamp> damageGains_;
     std::optional<double> lastDamageTime_{};
+    std::optional<double> lastCombatTime_{};
+    double combatSeconds_{};
 };
 
 }
