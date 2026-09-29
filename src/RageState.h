@@ -54,6 +54,7 @@ public:
     void SetRaging(bool active);
     AwardResult TryAward(const GainEvent& event, double nowSeconds);
     AwardResult TryAwardPlayerDamage(double nowSeconds);
+    AwardResult TryAwardCombatHit(bool inCombat, bool suspended);
     AwardResult UpdateCombat(double nowSeconds, bool inCombat, bool suspended);
     void EndCombat();
     void SuspendCombatTimer();

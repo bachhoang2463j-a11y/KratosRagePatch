@@ -125,6 +125,24 @@ AwardResult RageState::TryAwardPlayerDamage(double nowSeconds)
     return {award, !wasFull && current_ >= settings_.maximum};
 }
 
+AwardResult RageState::TryAwardCombatHit(bool inCombat, bool suspended)
+{
+    if (!inCombat) {
+        EndCombat();
+        return {};
+    }
+    if (suspended) {
+        return {};
+    }
+    const bool wasFull = current_ >= settings_.maximum;
+    const int award = std::max(0, std::min(2, settings_.maximum - current_));
+    if (award > 0) {
+        current_ += award;
+        loadClampSource_.reset();
+    }
+    return {award, !wasFull && current_ >= settings_.maximum};
+}
+
 AwardResult RageState::UpdateCombat(double nowSeconds, bool inCombat, bool suspended)
 {
     if (!inCombat) {

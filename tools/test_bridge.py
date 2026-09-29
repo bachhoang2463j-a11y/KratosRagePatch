@@ -23,7 +23,7 @@
   --mutant retry    把确认逻辑改成「同帧立刻回滚」，预期的旧行为 →
                     pending_survives_same_frame_drain 必须 FAIL。
   --mutant noepoch  去掉 Queue 的 generation 守卫（旧的无 epoch 实现）→
-                    stale_request_dropped_by_restore 必须 FAIL。
+                    旧 Configure 泄漏与对账完成后执行旧命中的 Restore/Revert 用例必须 FAIL。
 变异只作用于复制的副本，src/ 始终保持原样。用例只在 --mutant none 下要求全绿。
 
 用法

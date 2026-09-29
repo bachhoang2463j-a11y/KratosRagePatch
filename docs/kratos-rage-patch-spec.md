@@ -1,27 +1,28 @@
 # KratosRagePatch：模块、调试与扩展规格
 
-规格版本：1.2 · 对应补丁：0.2.0 · 源码基线：`0564148` · 核对日期：2026-09-28（合并接手时未提交的 1.1 草稿，补齐计时版说明与伤害链路复盘；1.1 没有独立 Git 快照）。
+规格版本：1.3 · 对应补丁：0.3.0 · 源码基线：随 0.3.0 发行提交保存（0.2.0 基线为 `0564148`）· 核对日期：2026-09-29（1.3：把积攒输入从“战斗计时每秒 +2”改为“原生命中事件每次通过筛选 +2”；1.2 的计时版说明与伤害链路复盘保留为历史）。
 
-**本文描述该基线的实际实现，不是新增功能承诺。** 目标仅为 Skyrim SE **1.6.640 / SKSE 2.2.3**。0.2.0 已完成离线构建、回归和发行物审计；2026-09-28 用户反馈“经过测试换为时间链路 mod 已基本可以使用”。这是用户环境下的初步可用反馈，未附逐项验收步骤、时序或截图，**不等于全部边界和整合包兼容性均已验证，更不证明历史伤害链路可用**。已冻结包中的 `gameRuntimeTested=false` 记录的是打包时证据，不因后续反馈重写 ZIP。本次只更新文档，没有重新运行构建或游戏测试；证据清单见 9.4，伤害方案评估见第 12 节。
+**本文描述该基线的实际实现，不是新增功能承诺。** 目标仅为 Skyrim SE **1.6.640 / SKSE 2.2.3**。0.3.0 仅把积攒输入替换为原生 `TESHitEvent`：战斗中每个通过筛选的命中固定 +2，取消按战斗时间增长、0.1 秒去重与每秒预算；账本、上限、满怒边沿、激活事务、存档和 HUD 链沿用 0.2.0，运行资产逐字节复用。0.2.0 已完成离线构建、回归和发行物审计，2026-09-28 用户反馈“经过测试换为时间链路 mod 已基本可以使用”——这两项都是 **0.2.0 的历史证据，不等于 0.3.0 已通过游戏内验收**，也不证明首击、致命击和特殊攻击这些引擎语义；离线测试不能替代用户用 0.3.0 包在游戏内逐项验收。已冻结包中的 `gameRuntimeTested=false` 记录的是打包时证据，不因后续反馈或新版本重写旧 ZIP。0.3.0 的离线执行结果与实际证据见 [离线验证记录](verification.md)，本文不复述其计数或哈希。证据清单见 9.4，伤害方案评估见第 12 节。
 
 配套文档：
 
 - [面向 Agent 的通用 Skyrim MOD 开发指南](skyrim-mod-development-agent-guide.md)：跨项目的选型、工程边界和验证准则。
-- [README](../README.md)、[实现接口契约](implementation-contracts.md)、[离线验证记录](verification.md)、[续作进度](continuation-plan.md)：保留的早期说明和历史记录。它们尚未全部同步到 0.2.0；其中的命中计分、前置、HUD 和包版本描述不能覆盖本规格及当前源码。
+- [README](../README.md)、[实现接口契约](implementation-contracts.md)、[离线验证记录](verification.md)、[续作进度](continuation-plan.md)：README 与接口契约已同步到 0.3.0；`verification.md` 与 `continuation-plan.md` 的早期章节保留历史，其中的命中计分、前置、HUD 和包版本描述不能覆盖本规格及当前源码。
 - `build/complete-0.2.0/`：本机保存的 0.2.0 构建、测试、审计和预览证据；该目录被 Git 忽略，不保证在新克隆中存在。
 
 ## 1. 版本基线与维护边界
 
-当前交付物：[KratosRagePatch-0.2.0-skyrim-1.6.640.zip](../dist/KratosRagePatch-0.2.0-skyrim-1.6.640.zip)，203,266 字节、21 个文件，其中运行文件 16 个、第三方许可证 4 个、manifest 1 个。
+当前交付物：[KratosRagePatch-0.3.0-skyrim-1.6.640.zip](../dist/KratosRagePatch-0.3.0-skyrim-1.6.640.zip)。相比 0.2.0，运行资产（ESP/SEQ、PEX、SWF、OAR/PI 配置、`config.json`）逐字节复用，只有 DLL 升级为 0.3.0。ZIP 共 21 个条目：16 个运行文件、4 个第三方许可证、1 个 manifest；**不包含 README 或验证记录**。文件大小、数量与 SHA-256 见包内 `Docs/KratosRage/manifest.json`，离线执行证据见 [离线验证记录](verification.md)；本文不复述这些数字。
+
+0.2.0 发行包已冻结、不再改动，其整体 SHA-256 为：
 
 ```text
-SHA-256
 72e4e8dd6a10d57abfc3aafcfaadf6c735f879bc7f001efb3d94c7e2e7eb23df
 ```
 
-正文中的“当前”“现有”均指源码提交 `0564148` 对应的 0.2.0 实现。0.1.0 命中计分、0.1.1 伤害诊断和 UI-r1 分档修订属于历史版本，不与本版叠装。本文和通用指南**未写回已交付 ZIP，也不改变它的文件清单或哈希**。
+正文中的“当前”“现有”均指随 0.3.0 发行提交保存的实现。0.2.0 计时实现对应提交 `0564148`；0.1.0 命中计分、0.1.1 伤害诊断和 UI-r1 分档修订属于历史版本，不与本版叠装。本文和通用指南**未写回已交付 ZIP，也不改变它们的文件清单或哈希**。
 
-本地仓库基线提交为 `944de33`，完整实现提交为 `0564148`，开发分支为 `fix/combat-timer-hud`。源码、测试、文档和 `dist` 发行物已纳入 Git；`vendor`、`build`、编译缓存被忽略。Git 提交不是远程备份证明，也不能替代这些外部输入的版本、哈希和重建记录。
+本地仓库已有提交为 `944de33`（接手基线）、`0564148`（0.2.0 计时实现）与 `73ef14f`（0.2.0 文档），当前分支 `fix/combat-timer-hud`。0.3.0 命中定额改动随本次发行提交保存为本地备份，不 push。源码、测试、文档和 `dist` 发行物已纳入 Git；`vendor`、`build`、编译缓存被忽略。Git 提交不是远程备份证明，也不能替代这些外部输入的版本、哈希和重建记录。
 
 维护约束：
 
@@ -30,7 +31,7 @@ SHA-256
 - 游戏内实测、调试器附加、临时诊断包安装等需要另行明确授权；本文列出方法不等于已经执行。
 - 不手写 ESP 生产二进制；更改 `PluginBuilder` 后重新生成。
 - 不加热键/MCM，不重做原动作；不以删除原装备或 Keytrace 条件简化集成。
-- 游戏运行时前置与 ESP masters 分开列出。`God of War.esp`、SkyUI、PapyrusUtil、OAR、PI 和原动作依赖不能因不在 master 列表就移除。**本补丁 0.2.0 不再依赖 PO3 命中事件或 Precision API**；这不代表可以删除整合包中其他 MOD 需要的这些前置。
+- 游戏运行时前置与 ESP masters 分开列出。`God of War.esp`、SkyUI、PapyrusUtil、OAR、PI 和原动作依赖不能因不在 master 列表就移除。**本补丁 0.3.0 使用原版 `TESHitEvent`，不依赖 PO3 命中事件或 Precision API**；这只是本补丁自身不再需要它们，不代表可以删除整合包中其他 MOD 需要的 PO3，也不能据此移除原 MOD 的任何其它前置。
 - Git 已由用户授权建立。续作先核对工作树、当前提交和发行物哈希，完成改动后按项目约定提交；文档更新不得偷偷重编译或替换用户正在测试的 ZIP。
 
 ## 2. 系统分层与模块地图
@@ -40,15 +41,16 @@ SHA-256
 **`RageState` 是怒气账本和事务状态的唯一权威。** `GameBridge` 持有它并把游戏事件转换为规则输入。Papyrus 读配置、维护生命周期并驱动表现；HUD 缓存只用于绘制，不能决定消费或变身成功。
 
 ```text
-KR_PlayerAlias 0.5 秒单发心跳 ── KR_Native.TickCombat ──┐
-原攻击 control / 装备与读档事件 ── KR_Native 绑定 ──────┤
-SKSE MagicEffectApply / Combat / MenuOpenClose ─────────┤
-JSON ── KR_Config ── ConfigureRage ────────────────────┤
-                                                       v
-                              GameBridge（主线程队列、战斗/暂停状态、激活）
-                                                       |
-                                                       v
-                              RageState（战斗计时、唯一账本、事务、存档）
+KR_PlayerAlias 0.5 秒心跳 ── KR_Native.TickCombat ──┐
+SKSE TESHitEvent（原生命中） ── GameBridge sink ─────┤
+原攻击 control / 装备与读档事件 ── KR_Native 绑定 ──┤
+SKSE MagicEffectApply / Combat / MenuOpenClose ─────┤
+JSON ── KR_Config ── ConfigureRage ─────────────────┤
+                                                    v
+                    GameBridge（主线程队列、战斗/暂停状态、命中筛选、激活）
+                                                    |
+                                                    v
+                    RageState（命中定额、唯一账本、上限/满怒边沿、事务、存档）
                                                        |
                          ┌─────────────────────────────┴──────────┐
                          v                                        v
@@ -61,22 +63,22 @@ JSON ── KR_Config ── ConfigureRage ────────────�
               Effect 0x805 → GameBridge                meter.swf（只绘制）
 ```
 
-旧 `Submit*`/PO3 路由和 `DamageHooks` 不在当前计分链上；保留名称是兼容措施，不表示有第二条积攒来源。
+当前计分链为 `TESHitEvent` → `GameBridge` 筛选/排队 → `RageState::TryAwardCombatHit` 的 +2 定额。旧 `Submit*` 入口、PO3 路由和 `DamageHooks` 都不在计分链上；保留名称是兼容措施，不表示有第二条积攒来源。
 
 ### 2.2 原生模块
 
 | 文件 | 负责什么 | 不负责什么 |
 | --- | --- | --- |
 | [src/Plugin.cpp](../src/Plugin.cpp) | 版本导出、入口校验、日志、SKSE 消息及注册 | 计分规则、界面绘制 |
-| [src/RageState.h](../src/RageState.h) / [cpp](../src/RageState.cpp) | 战斗计时、数值、激活 token、保存恢复；保留旧规则函数供历史测试 | RE 对象、法术施放、UI |
-| [src/GameBridge.h](../src/GameBridge.h) / [cpp](../src/GameBridge.cpp) | 表单解析、玩家战斗/暂停采样、释放资格、主线程队列、激活与 ready marker | 读取 JSON、绘制 HUD |
+| [src/RageState.h](../src/RageState.h) / [cpp](../src/RageState.cpp) | 命中定额、数值、上限、激活 token、保存恢复；保留旧规则函数供历史测试 | RE 对象、法术施放、UI |
+| [src/GameBridge.h](../src/GameBridge.h) / [cpp](../src/GameBridge.cpp) | 表单解析、原生命中事件解析与筛选、玩家战斗/暂停采样、释放资格、主线程队列、激活与 ready marker | 读取 JSON、绘制 HUD |
 | [src/PapyrusBindings.cpp](../src/PapyrusBindings.cpp) | 注册 `KR_Native` 的 17 个 native 函数 | 单独维护资源副本 |
 | [src/DamageHooks.cpp](../src/DamageHooks.cpp) / [h](../src/DamageHooks.h) | 保留的 0.1.1 伤害诊断实现；**不在当前 DLL 构建目标内，也不安装 hook** | 当前怒气增长 |
 | [src/Serialization.cpp](../src/Serialization.cpp) | SKSE co-save 编解码及回调 | 保存 HUD 动画、配置文件、RE 指针 |
 | [src/PCH.h](../src/PCH.h) | CommonLib/SKSE/spdlog 等预编译头 | 业务接口 |
 | [CMakeLists.txt](../CMakeLists.txt) | rules 静态库、测试可执行文件、DLL 及 stage 复制 | MO2 安装 |
 
-关键定位：`Plugin.cpp` 的 `SKSEPlugin_Load`；`GameBridge.cpp` 的 `TickCombat`、`IsUISuspended`、`IsLoadingTransition`、`Queue`、`UpdateStateFromGame`、`RunActivationTransaction`；`RageState.cpp` 的 `UpdateCombat`、`EndCombat`、`SuspendCombatTimer`、`CommitActivation`、`Restore`。
+关键定位：`Plugin.cpp` 的 `SKSEPlugin_Load`；`GameBridge.cpp` 的 `ProcessCombatHit`、`TickCombat`、`IsUISuspended`、`IsLoadingTransition`、`Queue`、`UpdateStateFromGame`、`RunActivationTransaction`；`RageState.cpp` 的 `TryAwardCombatHit`、`EndCombat`、`SuspendCombatTimer`、`CommitActivation`、`Restore`。
 
 ### 2.3 Papyrus 与 UI
 
@@ -94,7 +96,7 @@ JSON ── KR_Config ── ConfigureRage ────────────�
 ### 2.4 数据、生成器与验证程序
 
 - [data/config.default.json](../data/config.default.json)：发行默认配置；运行时读的是虚拟 Data 下的副本。
-- [data/integration.json](../data/integration.json)：人工核实的原记录、载荷与历史攻击白名单审计事实。**DLL 不读取这个文件，历史白名单也不再决定 0.2.0 的积攒。**
+- [data/integration.json](../data/integration.json)：人工核实的原记录、载荷与历史攻击白名单审计事实。**DLL 不读取这个文件，历史白名单也不再决定 0.3.0 的积攒。**
 - [tools/PluginBuilder/Analyzer.cs](../tools/PluginBuilder/Analyzer.cs)：读取原 ESP/ESM，生成记录分析及候选来源报告。
 - [tools/PluginBuilder/Defaults.cs](../tools/PluginBuilder/Defaults.cs)：本机默认输入路径、插件名、预留记录 ID。
 - [tools/PluginBuilder/PatchBuilder.cs](../tools/PluginBuilder/PatchBuilder.cs)：生成 ESP、VMAD、SEQ。
@@ -104,17 +106,18 @@ JSON ── KR_Config ── ConfigureRage ────────────�
 - [tools/compile_papyrus.py](../tools/compile_papyrus.py)：合并 SDK 头、官方编译/汇编、第二前端、反汇编、接口与默认值检查、PEX staging。
 - [tools/build_ui.py](../tools/build_ui.py)：MTASC 编译、SWF FWS/AVM1 结构及 PEX 调用合同检查。
 - [tools/test_bridge.py](../tools/test_bridge.py)：复制真实桥接源码，以 fake RE/SKSE 接口编译测试；变异仅作用于副本。
-- [tests/CombatTimerTests.cpp](../tests/CombatTimerTests.cpp)：当前战斗计时、暂停、脱战清零与持久化边界。
+- [tests/CombatHitTests.cpp](../tests/CombatHitTests.cpp)：当前命中定额的 +2、上限截断、无去重/预算与满额边沿。
+- [tests/CombatTimerTests.cpp](../tests/CombatTimerTests.cpp)：历史（0.2.0）战斗计时、暂停、脱战清零与持久化边界。
 - [tests/test_combat_heartbeat.py](../tests/test_combat_heartbeat.py)：在限定语句解释器中执行真实 Papyrus 心跳函数，验证单发链；不等于真实 VM 调度。
 - [tests/test_ui_contract.js](../tests/test_ui_contract.js)：执行真实 AS2 方法的离线协议检查，覆盖十档显示、无数字、坐标、边框和重复刷新。
-- [tools/package_release.py](../tools/package_release.py)：默认配置 staging、严格运行文件清单、原 MOD 基线检查和不可覆盖 ZIP。
-- [tools/verify_release.py](../tools/verify_release.py)：只读核对 ZIP 与当前 stage、许可证及构建报告，检查 CRC、哈希、路径、默认配置、原 MOD 和五个布局探针。当前不把这两份 Markdown 文档列入归档或逐字节比较。
+- [tools/package_release.py](../tools/package_release.py)：默认配置 staging、严格运行文件清单、原 MOD 基线检查，生成不可覆盖的 ZIP 与 `.zip.sha256`。
+- [tools/verify_release.py](../tools/verify_release.py)：只读核对 ZIP 与当前 stage、许可证及构建报告，检查 CRC、哈希伴随文件、路径、默认配置、原 MOD 和五个布局探针；锁定冻结 0.2.0 参考包的 SHA-256，并逐字节比较全部非 DLL 运行资产及许可证。`--reference` 仅允许指定同一冻结包的另一位置，不允许替换参考内容。当前不把这两份 Markdown 文档列入归档或逐字节比较。
 
 ## 3. 核心状态与不变量
 
 ### 3.1 规则层类型
 
-`RageSettings{}` 的 C++ 遗留初始化值仍是 maximum=100、normalHit=2、powerHit=4、specialHit=3、receivedHit=1、kill=5、maxGainPerSecond=8；发行 JSON/Papyrus 默认收益则是 2/2/2/0/0、预算 10。**二者都不是当前计时速率的定义**：0.2.0 仅 `maximum` 影响计时积攒上限，速度固定写在 `UpdateCombat` 为每累计 1 秒 +2，旧收益/预算字段只是兼容保留。
+`RageSettings{}` 的 C++ 遗留初始化值仍是 maximum=100、normalHit=2、powerHit=4、specialHit=3、receivedHit=1、kill=5、maxGainPerSecond=8；发行 JSON/Papyrus 默认收益则是 2/2/2/0/0、预算 10。**这些收益/预算字段都不是当前积攒的定义**：0.3.0 每个通过筛选的命中固定 +2，规则写在 `TryAwardCombatHit`；只有 `maximum` 影响封顶值，默认 100 需要 50 次有效命中，旧收益/预算字段只是兼容保留。
 
 `Snapshot` 字段：
 
@@ -131,27 +134,26 @@ JSON ── KR_Config ── ConfigureRage ────────────�
 规则：
 
 1. UI 不写账本；没有 `SetRage`/`AddRage` 对外接口。十档显示只改变填充长度。
-2. 正常运行且不处于暂停/加载等屏蔽状态时，玩家 `IsInCombat() && !IsDead()` 才累计时间；每累计 1 秒 +2，封顶于 maximum。**不要求 eligible，也不因 raging/pending 本身停止积攒**；释放资格另行判断。
-3. 首个有效心跳仅建立时间基准。后续使用相邻有效心跳的 `steady_clock` 差；非有限时间只停表，回拨或间隔大于 1.5 秒丢弃该间隔和未结算小数，不按长断档追补。
-4. `SuspendCombatTimer()` 清时间基准、保留此前小数；恢复首个心跳不增长。`ClearTransient()` 清基准及小数，由 Reset、Restore、Reconcile、成功提交和 raging 状态切换调用。
+2. 命中事件在**到达**和**实际处理**两个时点都必须处于活跃战斗：非战斗、玩家死亡、暂停/菜单/加载、尚未完成读档对账时不授予。积攒与装备资格无关，也不因 pending/raging 停止；释放资格另行判断。
+3. 命中接受条件：玩家本人为 aggressor、目标为活着的 `Actor`、非自己/队友/玩家或队友直接指挥者、对玩家敌对、未标记格挡。到达时目标已死亡则拒绝；到达时活着、入队后才死亡不因排队延迟拒绝，但仍需句柄有效并通过敌对/友军检查。同一目标快速多段、多目标命中分别计一次；**不做 0.1 秒同源去重，也没有每秒预算**，总怒气封顶于 maximum。
+4. 不再有按时间增长的结算：`TickCombat` 心跳只刷新状态、脱战/死亡清零与事务对账。`SuspendCombatTimer()` 仍清时间基准，但当前没有按时间的增长可暂停；`ClearTransient()` 清瞬态计时，由 Reset、Restore、Reconcile、成功提交和 raging 状态切换调用。
 5. 非战斗或死亡时 `EndCombat()` 清 current、pending、restoredPending、延迟上限源及瞬态计时，桥接同时作废激活 token。它**不主动 dispel 原变身效果**。脱战清零是资源重置，不是成功激活消费。
 6. 激活消费只发生在正确 token 的成功提交，或“恢复 pending 且真实效果已存在”的读档对账中；普通取消不扣，但不能阻止随后脱战清零。
-7. 满怒通知由计时授予路径的“未满 → 满”边沿产生。配置下调上限不会自行触发新的授予反馈；满额期间不囤积时间供消费后立即领取。
-8. `RageState` 不持有锁；`GameBridge` 负责锁和执行边界。`TryAward`、`TryAwardPlayerDamage` 及旧去重/滚动预算仍有历史单测，但当前生产桥接没有调用它们。
+7. 满怒通知由 `TryAwardCombatHit` 的“未满 → 满”边沿产生。配置下调上限不会自行触发新的授予反馈；满额后每个命中都不再增加怒气。
+8. `RageState` 不持有锁；`GameBridge` 负责锁和执行边界。`TryAward`、`TryAwardPlayerDamage` 及旧去重/滚动预算仍有历史单测，但生产积攒只走 `TryAwardCombatHit`，桥接不调用它们。
 
-### 3.2 固定时间参数
+### 3.2 固定时间与定额参数
 
 | 参数 | 当前值/单位 | 所在位置 |
 | --- | --- | --- |
 | 战斗采样单发链 | 请求间隔 0.5 秒，非精准调度 | `KR_PlayerAlias.RageEndWatchInterval` |
-| 怒气结算 | 每累计 1.0 秒 +2 | `RageState::UpdateCombat` |
-| 不可信心跳间隔 | 大于 1.5 秒或回拨时不补算 | `RageState::UpdateCombat` |
+| 命中定额 | 每个通过筛选的命中 +2，无去重/预算 | `RageState::TryAwardCombatHit` |
 | 激活请求节流 | 0.25 秒 | `RunActivationTransaction` |
 | 激活确认 deadline | 0.5 秒 | `RunActivationTransaction` |
 | 新游戏配置补推 | 1.0 秒后一次 | `KR_Config.StartupRepushDelay` |
 | 读档后满怒表现宽限 | 2.0 秒 | `KR_Config.FullFeedbackLoadGrace` |
 
-原生计时使用 `steady_clock` 秒数；Papyrus 使用 `Utility.GetCurrentRealTime()`；AS2 动画使用 `getTimer()` 毫秒。不要跨层比较原始绝对时间戳。
+原生时间计算使用 `steady_clock` 秒数（当前仅用于节流/期限判定）；Papyrus 使用 `Utility.GetCurrentRealTime()`；AS2 动画使用 `getTimer()` 毫秒。不要跨层比较原始绝对时间戳。
 
 确认 deadline 不是“0.5 秒后必定触发的定时器”。原生效果事件可立即推进；否则由后续刷新检查期限。Papyrus 更新链在 VM 负载下可能晚于 0.5 秒执行。
 
@@ -159,24 +161,25 @@ JSON ── KR_Config ── ConfigureRage ────────────�
 
 ### 4.1 加载与初始化
 
-1. `SKSEPlugin_Version` 声明 0.2.0、仅 1.6.640、最低 SKSE 2.2.3、Address Library 和 post-629 结构。
+1. `SKSEPlugin_Version` 声明 0.3.0、仅 1.6.640、最低 SKSE 2.2.3、Address Library 和 post-629 结构。
 2. `SKSEPlugin_Load` 再次检查 runtime，建立日志并注册 Papyrus、消息与序列化。当前不编译或安装 `DamageHooks`。
-3. `kDataLoaded` 调用 `GameBridge::Initialize`：解析核心表单，向脚本事件源注册 MagicEffectApply、Combat，向 UI 单独注册 MenuOpenClose。当前没有 Death sink；玩家死亡由状态采样识别。
-4. `KR_Config.OnInit` 读配置并推送；一秒后再补推一次，避免新游戏 native Revert 与脚本初始化的顺序使 `configured_` 留在 false。配置决定释放资格等设置，不是计时增长的前置门槛。
+3. `kDataLoaded` 调用 `GameBridge::Initialize`：解析核心表单，向脚本事件源注册 `TESHitEvent`、MagicEffectApply、Combat，向 UI 单独注册 MenuOpenClose。当前没有 Death sink；玩家死亡由状态采样识别。
+4. `KR_Config.OnInit` 读配置并推送；一秒后再补推一次，避免新游戏 native Revert 与脚本初始化的顺序使 `configured_` 留在 false。配置决定释放资格等设置，不是积攒的前置门槛（未完成配置时也按默认值积攒）。
 5. 玩家 alias 的 `EnsureBridge()` 在 native 可用时注册唯一的攻击 control 和 ModEvent，无论是否可用都尝试维持一条 0.5 秒单发心跳。首个可用心跳补注册并重载配置；不注册 PO3。读档先清旧更新状态，再重建心跳、发起对账并重载配置。
 6. `KR_Widget` 通过 SkyUI 注册。`OnWidgetReset` 重推 style、rage 和显示状态；普通配置/事件到来时若 SWF 尚未 ready，不能据此推断逻辑状态未更新。
 
-**诊断关键：** `IsAvailable()` 为 true 只证明 native 核心记录解析条件满足，不证明 PapyrusUtil、SkyUI、OAR、PI 或所有可选装备表单都可用，也不检测 PO3。若 DLL 根本未加载，调用 native 本身可能无法绑定，不会可靠地返回一个 false 供脚本处理。
+**诊断关键：** `IsAvailable()` 为 true 只证明 native 核心记录解析条件满足，不证明 PapyrusUtil、SkyUI、OAR、PI 或所有可选装备表单都可用。若 DLL 根本未加载，调用 native 本身可能无法绑定，不会可靠地返回一个 false 供脚本处理。
 
-### 4.2 战斗计时与旧入口边界
+### 4.2 命中事件与旧入口边界
 
-1. `KR_PlayerAlias.OnUpdate` 调用 `KR_Native.TickCombat()`；该 native 只投递任务，实际在 `GameBridge::Queue` 的锁和 generation 守卫内处理。
-2. native 采样玩家 `IsInCombat() && !IsDead()`，再由 `UpdateStateFromGame()` 更新装备资格、原变身效果和激活事务。玩家缺失、待对账或 Loading 过渡只停表，不把临时脱战状态写成资源清零。
-3. 正常运行时将 `Now()`、战斗状态、`IsUISuspended()` 交给 `RageState::UpdateCombat`。每累计 1 秒 +2；不战斗/死亡则清零，暂停不补算。具体小数、长断档和满额规则见 3.1。
-4. 授予或资源重置后同步 ready marker、发 `KR_RageChanged`；计时使怒气从未满达到上限时，再发 `KR_RageBecameFull`。SKSE Combat 事件用于补充刷新，不代替持续心跳。
-5. 所有旧 `SubmitWeaponHit`、`SubmitMagicHit`、`SubmitProjectileHit`、`SubmitIncomingHit`、`SubmitKill` 和 C++ `SubmitPlayerDamage` 均为空实现。保留旧 alias 回调及函数签名，不代表仍依赖其事件，也不保证任意混搭旧 PEX/新 DLL 都兼容；实际运行应使用同一版本完整包。
+1. `KR_PlayerAlias.OnUpdate` 调用 `KR_Native.TickCombat()`；该 native 只投递任务，实际在 `GameBridge::Queue` 的锁和 generation 守卫内处理。`TickCombat` 不再按时间授予，只刷新战斗/变身状态、处理脱战/死亡清零与激活事务对账；它先做 `needsReconcile_`/Loading 判定，处于该窗口时整条心跳直接返回。
+2. 原生命中经 `GameBridge` 的 `TESHitEvent` sink 进入：到达时记录 `received`，随后筛选玩家本人发起、玩家存活且在战斗、非暂停/菜单/加载/未对账、目标为活着的 `Actor`、未标记格挡、通过敌我/友军判定，捕获目标句柄及 cause/target/source/projectile/flags，再带 generation 与 hit context 投递主线程任务。到达阶段任何拒绝都以对应 result 类别记录；`Queue` 发现 generation 已变（重载/Revert）会直接丢弃任务，此时可能只有 `received` 而没有处理日志。
+3. 执行阶段调用 `ProcessCombatHit`：重新校验玩家、UI/加载状态、目标句柄与敌我/友军关系，**不重查格挡**（flags 在捕获时已筛选且视为不变）；通过后调用 `RageState::TryAwardCombatHit` 施加固定 +2，并同步 ready marker 与 `KR_RageChanged`。目标在到达时活着、入队后才死亡不因排队拒绝；到达时已死亡拒绝。目标实际是否掉血不参与判定，免疫但仍产生未格挡命中事件照常计分；无事件的特殊攻击不凭动画猜测。
+4. 菜单打开或关闭、以及脱战/死亡通知都会递增 hit context；此后才执行、但入队早于这些事件的旧 hit 会以 `stale_context` 被丢弃——包括“菜单已打开又关闭”后才轮到执行的命中。这是情境隔离，**不是去重**；pending/raging 切换不递增 context。
+5. 逐次授予且不合并：怒气从未满达到上限时发 `KR_RageBecameFull`。不做 0.1 秒同源去重，也没有每秒预算，总怒气封顶。SKSE Combat 事件用于补充刷新，不代替持续心跳。
+6. 所有旧 `SubmitWeaponHit`、`SubmitMagicHit`、`SubmitProjectileHit`、`SubmitIncomingHit`、`SubmitKill` 和 C++ `SubmitPlayerDamage` 均为空实现；受击、击杀事件不计分，击杀不额外奖励。保留旧 alias 回调及函数签名，不代表仍依赖其事件，也不保证任意混搭旧 PEX/新 DLL 都兼容；实际运行应使用同一版本完整包。
 
-**积攒资格与释放资格不同。** 当前计时不检查命中、敌我关系或装备。`IsAllowedEquipment` 只参与释放资格：右手空/徒手且左手 Armor；右手有原斧头 keyword；右手处于 single 白名单；或双手都处于 paired 白名单。它不完整复刻每个 OAR 子组的按键/效果条件。旧命中/受击/击杀规则见第 12 节，不作为 0.2.0 调试入口。
+**积攒与释放资格不同。** 积攒不要求配置完成，也不检查装备或敌我来源以外的条件（未配置时按默认上限与 +2 积攒）；`IsAllowedEquipment` 只参与释放资格：右手空/徒手且左手 Armor；右手有原斧头 keyword；右手处于 single 白名单；或双手都处于 paired 白名单。它不完整复刻每个 OAR 子组的按键/效果条件。历史命中/受击/击杀规则见第 12 节，不作为 0.3.0 调试入口。
 
 ### 4.3 满怒、原动画和激活事务
 
@@ -207,7 +210,7 @@ payload length          = 12 bytes
 
 Load 先 Revert；忽略未知 type，拒绝错误版本/长度/短读，拒绝 current>10000 或非 0/1 状态位。无有效记录时保留重置后的状态。
 
-未持久化：配置上限、资格、UI 动画、事件注册、计时基准及未满一秒的小数、旧去重/预算窗口、任务队列、激活 token、RE 指针。
+未持久化：配置上限、资格、UI 动画、事件注册、节流/期限状态、旧去重/预算窗口、任务队列、激活 token、RE 指针。
 
 恢复顺序必须兼容 **Restore → Reconcile → Configure**：
 
@@ -226,20 +229,20 @@ Load 先 Revert；忽略未知 type，拒绝错误版本/长度/短读，拒绝 
 
 | 接口 | 作用 |
 | --- | --- |
-| `ConfigureRage(int maximum, int normalHit, int powerHit, int specialHit, int receivedHit, int kill, int maxGainPerSecond, float deniedInterval)` | 下推上限、拒绝冷却及兼容保留的旧收益字段；不改变固定计时速率 |
+| `ConfigureRage(int maximum, int normalHit, int powerHit, int specialHit, int receivedHit, int kill, int maxGainPerSecond, float deniedInterval)` | 下推上限、拒绝冷却及兼容保留的旧收益字段；不改变固定 +2 定额 |
 | `SubmitWeaponHit(ObjectReference target, Form source, Projectile projectile, int flags)` | 旧武器出击接口；无操作，不计分 |
 | `SubmitMagicHit(ObjectReference target, Form source, Projectile projectile)` | 旧魔法接口；无操作，不计分 |
 | `SubmitProjectileHit(ObjectReference target, Form source, Projectile projectile)` | 旧投射物接口；无操作，不计分 |
 | `SubmitIncomingHit(ObjectReference aggressor, Form source, Projectile projectile, bool powerAttack, bool sneakAttack, bool bashAttack, bool blocked)` | 旧受击接口；无操作，不计分 |
 | `SubmitKill(Actor victim, Actor killer)` | 旧击杀接口；无操作，不计分 |
-| `TickCombat()` | 排队采样战斗/暂停状态，驱动唯一积攒通道并刷新事务 |
-| `RefreshEquipmentState()` | 排队刷新资格、原效果、脱战/死亡状态与事务；不授予计时怒气 |
+| `TickCombat()` | 排队采样战斗/暂停状态，处理脱战/死亡清零与事务对账；不再按时间授予 |
+| `RefreshEquipmentState()` | 排队刷新资格、原效果、脱战/死亡状态与事务；不授予命中怒气 |
 | `NotifyActivationAttempt(string control, bool rightAttack, bool forward, bool back, bool left, bool right)` | 观察原操作并按条件拒绝提示 |
 | `ReconcileAfterLoad()` | 排队进行一次读档对账 |
 | `GetRage()` / `GetRageMaximum()` | 返回 int |
 | `IsRaging()` / `IsReady()` / `IsEligible()` / `IsPending()` / `IsAvailable()` | 返回 bool |
 
-变更入口大多先入队，getter 返回当前已应用的快照；旧 `Submit*` 直接返回。**调用 `ConfigureRage()` 后紧接着 getter，不保证读到刚投递的设置。** 诊断需要看后续更新/回调，而不是把接口误当同步 RPC。C++ `SubmitPlayerDamage` 不是 Papyrus native，不计入上述 17 个接口。
+变更入口大多先入队，getter 返回当前已应用的快照；旧 `Submit*` 直接返回。**调用 `ConfigureRage()` 后紧接着 getter，不保证读到刚投递的设置。** 诊断需要看后续更新/回调，而不是把接口误当同步 RPC。C++ `SubmitPlayerDamage` 不是 Papyrus native，不计入上述 17 个接口。`TESHitEvent`、`MagicEffectApply`、`Combat` 是原生事件 sink，同样不是 Papyrus 函数，不计入这 17 个接口。
 
 ### 5.2 Native → Papyrus 事件
 
@@ -277,9 +280,9 @@ setValue(current, maximum)  // 兼容旧调用的空方法，不显示数字
 
 `KR_Widget.Ready` 是继承的**界面就绪**属性；`KR_Native.IsReady()`/SWF `_ready` 才是**怒气可发动**。二者同名近似但不是同一状态。HUD 尚未 ready 时 `FlashDenied()` 会直接返回，未缓冲该一次性反馈。
 
-当前可见性以 [KR_Widget.psc](../papyrus/KR_Widget.psc) 的实际分支为准：`_diagnosticAlwaysOn=True`，读档也重置为 True，所以 native 可用时即使零怒、脱战或装备不合格也请求显示，**不能把脱战后空条仍在视为计时清零失败**。SkyUI Ready、宿主 HUD mode、alpha 和屏幕位置仍会影响最终是否可见。
+- 当前可见性以 [KR_Widget.psc](../papyrus/KR_Widget.psc) 的实际分支为准：`_diagnosticAlwaysOn=True`，读档也重置为 True，所以 native 可用时即使零怒、脱战或装备不合格也请求显示，**不能把脱战后空条仍在视为资源清零失败**。SkyUI Ready、宿主 HUD mode、alpha 和屏幕位置仍会影响最终是否可见。
 
-脚本中保留了“临时显示/raging，否则 eligible 且战斗中”的旧显隐分支及脱战延迟，但当前常显分支优先返回，旧分支不是 0.2.0 默认策略；该布尔值也不是 JSON 配置项。
+脚本中保留了“临时显示/raging，否则 eligible 且战斗中”的旧显隐分支及脱战延迟，但当前常显分支优先返回，旧分支不是 0.3.0 默认策略；该布尔值也不是 JSON 配置项。因此 `hud.outOfCombatDelay`、`hud.fadeDuration` 被解析保留却不产生脱战渐隐；显示为常显、十档、无数字。
 
 ## 6. 配置协议
 
@@ -309,12 +312,12 @@ setValue(current, maximum)  // 兼容旧调用的空方法，不显示数字
 
 实际行为：
 
-- `rage.gain.*`、`rage.maxGainPerSecond` 仍被解析、下推和钳制，但**不控制 0.2.0 的积攒**；每秒 +2 没有 JSON 开关。修改 `maximum` 会改变封顶值及理想充满时长，不改变速度。
-- HUD 位置按 1280×720 逻辑输入映射到宿主 metrics，并在 SWF 中钳制到安全边界；96×4 是条体尺寸，不含外框，不是对所有分辨率的物理像素保证。十档显示不改账本，常显行为见 5.3。
+- `rage.gain.*`、`rage.maxGainPerSecond` 仍被解析、下推和钳制，但**不控制 0.3.0 的积攒**；每个通过筛选的命中固定 +2，没有 JSON 开关，也没有每秒限流。修改 `maximum` 会改变封顶值及默认满额所需命中次数（100 对应 50 次）。
+- HUD 位置按 1280×720 逻辑输入映射到宿主 metrics，并在 SWF 中钳制到安全边界；96×4 是条体尺寸，不含外框，不是对所有分辨率的物理像素保证。当前 `_diagnosticAlwaysOn` 分支常显、十档且无数字；`hud.outOfCombatDelay`、`hud.fadeDuration` 仍被解析和保留，但在常显策略下不产生脱战渐隐效果。
 - 文件缺失/不能解析用默认值；字段越界回退该字段默认值并 Trace，不是把它夹到边界。
 - 原生对 maximum、收益、每秒预算再次钳制到上表相同区间。
 - **拒绝冷却有不同的第二层范围：`GameBridge::Configure` 将其钳制到 0.1–5.0 秒。** 因此配置 0 不表示无冷却，配置 60 也不表示每分钟只能提示一次。
-- HUD/泛光时长为 0 有关闭对应动画/泛光的语义，不能类推到 deniedInterval。
+- `feedback` 时长的 0 值有关闭对应反馈/泛光的语义；该规则不能类推到 hud 的 outOfCombatDelay/fadeDuration（常显下不生效），也不能类推到 deniedInterval（有第二层范围）。
 - 配置只读，不回写、不提供实时文件监视。现有 reload 时点是初始化、启动补推、每次玩家读档，以及 alias 首次发现 native 可用时的补推；不是每个心跳都重读。编辑后重新加载测试存档应用。
 - `KR_Config.AppliedMaximum`、`AppliedFullGlowDuration` 记录最近下推的值，供诊断观察；它们是 Auto 属性，不是收到 native 确认的回执。
 - 编译脚本同时核对 20 个模板字段、`Default*` 属性和读取调用的路径/回退属性；改模板必须同步这些位置。
@@ -391,7 +394,7 @@ $SIBADA = @CAST|0x804|KratosRagePatch.esp|1|1|1|0|0|0|0|0|0
 
 重写块是“请求行 + 两条保留行”。其他有效 `$SIBADA` 行移交/删除，注释及块外字节保持原状。`data/integration.json` 与独立测试记录此分工；不要只改 INI 就让两侧重复执行。
 
-### 7.5 历史特殊攻击审计表（不用于 0.2.0 计分）
+### 7.5 历史特殊攻击审计表（不用于 0.3.0 计分）
 
 所有 ID 均为 `God of War.esp` 的 local ID。下表来自 [data/integration.json](../data/integration.json) 的早期来源审计，保留供回溯；当前 `GameBridge::ResolveForms` 不构建魔法/投射物计分白名单。
 
@@ -430,11 +433,11 @@ native 日志由 SKSE 的 log directory API 定位，通常在 Windows“文档�
 
 | 日志片段 | 说明 |
 | --- | --- |
-| `KratosRage 0.2.0 loaded for Skyrim 1.6.640; combat timer +2/s, clear on combat end; damage hooks disabled` | 当前 DLL 入口已到末尾，声明计时模式；不代表玩法链全通 |
+| `KratosRage 0.3.0 loaded for Skyrim 1.6.640; combat hits +2/event, no rate cap, clear on combat end; passive gain and damage hooks disabled` | 当前 DLL 入口已到末尾，声明命中定额模式；不代表玩法链全通 |
 | `KratosRage records and event sinks initialized` | 核心记录解析成功并走到初始化末尾 |
-| `KratosRage combat heartbeat received` | 已进入有效玩家的心跳任务；不单独证明计时授予 |
-| `KratosRage combat heartbeat: player entered combat` / `player left combat, rage cleared` | 采样战斗状态发生变化；日志早于加载/对账保护判断，清零须结合实际快照核实 |
-| `KratosRage rage reached maximum via combat timer` | 计时授予使账本到达上限，并将发满怒事件 |
+| `KratosRage combat heartbeat received` | 已进入有效玩家的心跳任务；不单独证明命中授予 |
+| `KratosRage combat heartbeat: player entered combat` / `player left combat, rage cleared` | 采样战斗状态发生变化；心跳日志在 loading/对账 guard 之后输出，处于该 guard 时整条心跳直接返回、不记录 |
+| `KratosRage hit <result>: seq=... generation=... context=... cause=... target=... source=... projectile=... flags=... award=... rage=<current>/<maximum> count=... suppressed=...` | 命中诊断。`result` 为 `received`、`awarded`、`at_maximum`、`became_full` 或具体拒绝原因；同一 result 类别每秒最多一条，`count` 为该类整进程累计，`suppressed` 显示上一个输出周期内被抑制的条数并在输出后清零。没有前后状态或 token 字段 |
 | `Failed to register SKSE interfaces` | Papyrus/消息注册失败 |
 | `Required original spell ... was not resolved` | 三个成功载荷之一解析不到 |
 | `KratosRage disabled: required plugin records were not resolved` | 核心依赖解析失败，机制不提供 |
@@ -443,9 +446,9 @@ native 日志由 SKSE 的 log directory API 定位，通常在 Windows“文档�
 | `Failed to save rage state` | co-save 写入失败 |
 | `Unsupported or truncated rage save record` / `Invalid rage save data` | co-save 格式/范围拒绝 |
 
-当前**没有**每个心跳的时间差/停表原因、每次 +2、装备资格、token、generation 或所有 payload 成功结果日志。旧命中路径已停用，不能通过查找旧 hit 日志判断当前计时是否工作；对历史版也须先确认该路径当时是否写日志，不能据“没有 hit 日志”推断事件未到达。
+0.3.0 的命中诊断由 `GameBridge::TraceCombatHit` 输出：按 result 类别区分**接收、拒绝原因、实际授予与满额**，每类每秒最多一条；限流只限制日志、不限制计分。字段为 seq、generation、context、cause、target、source、projectile、flags、award、rage current/maximum、count、suppressed，**没有前后状态或 token 字段**，计数为整进程累计。仍**没有**每个心跳的状态差、装备资格或所有 payload 成功结果的日志。历史 PO3/伤害路径已停用；对历史版也须先确认该路径当时是否写日志，不能据“没有 hit 日志”推断事件未到达。
 
-SWF 在收到宿主 metrics 时还可能经 `_global.skse.Log` 输出 `KratosRage meter 0.2.0 hud metrics: ...`，这是 UI 映射信息，不是原生怒气日志；缺失该行也不能单独证明没有绘制。
+SWF 在收到宿主 metrics 时还可能经 `_global.skse.Log` 输出 `KratosRage meter 0.2.0 hud metrics: ...`：0.3.0 的 SWF 逐字节复用 0.2.0，所以组件自报版本仍是 0.2.0，这是 UI 映射信息、不是原生怒气日志；缺失该行也不能单独证明没有绘制。
 
 Papyrus `Debug.Trace` 当前主要在配置读取/缺失/越界/空 Widget 等分支，前缀为 `[KR_Config]`。alias 当前没有独立心跳 Trace，相关观察在 native 日志中。能否采集 Papyrus 日志取决于实际配置；日志未开启时不擅改 INI。详细报错需结合 native 是否绑定，不能只看前置脚本文件存在。
 
@@ -455,10 +458,10 @@ Papyrus `Debug.Trace` 当前主要在配置读取/缺失/越界/空 Widget 等�
 | --- | --- | --- |
 | 没有 native 日志 | runtime、SKSE loader 日志、DLL 胜出文件、VC x64 导入、入口早退 | Plugin.cpp |
 | 有 loaded，但 disabled | 原 ESP/核心记录、masters 与动态依赖是否存在 | ResolveForms |
-| HUD 与计时都不工作 | DLL/PEX 是否同版、VMAD/alias 初始化、单发心跳是否到达、核心记录是否可用 | KR_PlayerAlias / GameBridge |
-| 在战斗但不涨怒 | `IsInCombat/IsDead`、Loading/对账、菜单/暂停、心跳间隔是否超过 1.5 秒；不先查旧 source 白名单 | TickCombat / UpdateCombat |
+| HUD 与积攒都不工作 | DLL/PEX 是否同版、VMAD/alias 初始化、单发心跳是否到达、核心记录是否可用 | KR_PlayerAlias / GameBridge |
+| 在战斗但不涨怒 | 命中事件是否到达、目标是否活着的敌对 `Actor`、是否被标记格挡、到达/处理时是否处于暂停/菜单/加载/未对账/非战斗 | TESHitEvent sink / TryAwardCombatHit |
 | 小幅涨怒但条长没变 | 十档显示、native 真实值是否增长；多个 +2 可能仍处于同一档 | RageState / AS2 |
-| 脱战后数值清零但空条仍在 | 0.2.0 常显分支；资源清零与 HUD 隐藏是不同结果 | EndCombat / KR_Widget |
+| 脱战后数值清零但空条仍在 | 常显分支；资源清零与 HUD 隐藏是不同结果 | EndCombat / KR_Widget |
 | 数值满了但原动画不触发 | ready marker、configured/装备资格、OAR 冲突胜出/源条件、Keytrace、原动画可用性 | SyncReadyMarker / OAR |
 | 原动画出现但不消费 | PI 覆盖是否胜出、0x804/805 请求链、0x813 效果、超时日志 | PI / 激活事务 |
 | 一直 pending 或结束后不涨 | alias 单发心跳、TickCombat 中状态刷新、加载/暂停和对账状态 | KR_PlayerAlias / GameBridge |
@@ -481,7 +484,7 @@ Debug.Trace("[KR_DIAG] rage=" + KR_Native.GetRage() + "/" + KR_Native.GetRageMax
 
 这段只是建议，**未加入当前四个 PEX**。它适用于 native 已绑定的场景；读到的是各次 getter 当时的状态，不是原子化的跨函数快照。不要在同一个调用栈里刚 Configure 就把旧结果当失败。
 
-需要事件级诊断时，在桥接的接收/分类/拒绝/授予/事务边界加限流日志，记录来源 ID、时间、原因和前后状态；不是在 SWF 猜测规则。调试器仅在明确授权的测试进程中附加，并匹配同一构建的符号；当前发行 ZIP 不含 PDB。
+0.3.0 已在桥接的接收/拒绝/授予/满额边界加入限流日志（`KratosRage hit <result>`），记录 seq、generation/context、cause/target/source/projectile ID、flags、授予量与当前怒气；每类每秒最多一条，限流只作用于日志、不限制计分，**没有前后状态或 token 字段**。不要在 SWF 猜测规则。调试器仅在明确授权的测试进程中附加，并匹配同一构建的符号；当前发行 ZIP 不含 PDB。
 
 ## 9. 离线调试与构建命令
 
@@ -528,24 +531,25 @@ python "$root\tools\verify_release.py"
 
 | 测试/报告 | 覆盖 |
 | --- | --- |
-| [tests/CombatTimerTests.cpp](../tests/CombatTimerTests.cpp) | 当前计时授予、暂停/长断档、脱战清零、上限和持久化边界 |
+| [tests/CombatHitTests.cpp](../tests/CombatHitTests.cpp) | 当前命中定额：+2、上限截断、无去重/预算、满额边沿及暂停/非战斗/非配置边界 |
+| [tests/CombatTimerTests.cpp](../tests/CombatTimerTests.cpp) | 历史（0.2.0）计时授予、暂停/长断档、脱战清零、上限和持久化边界 |
 | [tests/test_combat_heartbeat.py](../tests/test_combat_heartbeat.py) | 真实 Papyrus 函数体在受限解释器中的注册、重挂、读档重置和去抖 |
 | [tests/RageStateTests.cpp](../tests/RageStateTests.cpp) + [hit_cases.json](../tests/fixtures/hit_cases.json) | 历史命中数值、去重、窗口、资格、回退时钟；不代表当前在用 |
 | [tests/PlayerDamageTests.cpp](../tests/PlayerDamageTests.cpp) | 历史每次伤害事件 +2、滚动预算 10/秒；不验证引擎伤害输入 |
 | [tests/damagehooks/DamageHookTests.cpp](../tests/damagehooks/DamageHookTests.cpp) | 历史 hook 在假 vtable/假引擎下的安装、过滤、血差与嵌套；独立测试，不在根 CMake 默认目标中 |
 | [tests/ActivationTests.cpp](../tests/ActivationTests.cpp) + [activation_cases.json](../tests/fixtures/activation_cases.json) | token、成功/取消、重复提交、外部变身 |
 | [tests/SerializationTests.cpp](../tests/SerializationTests.cpp) | 保存恢复、pending 对账、自定义上限保留 |
-| [tests/bridge/BridgeTests.cpp](../tests/bridge/BridgeTests.cpp) | 真桥接源码的 mock 计时/菜单/死亡/加载事件、旧入口不计分、事务与队列隔离 |
+| [tests/bridge/BridgeTests.cpp](../tests/bridge/BridgeTests.cpp) | 真桥接源码的 mock 命中事件（到达筛选、句柄失效、暂停/菜单/死亡/加载）、旧入口不计分、事务与队列隔离 |
 | [tests/test_ui_contract.js](../tests/test_ui_contract.js) | AS2/Papyrus 协议、十档/无数字、映射及边框；不是游戏视觉验收 |
-| [tests/test_package.py](../tests/test_package.py) | ESP/VMAD/SEQ 原字节，OAR/PI、历史审计事实、native 函数名集合、唯一计时入口与 stage 布局 |
+| [tests/test_package.py](../tests/test_package.py) | ESP/VMAD/SEQ 原字节，OAR/PI、历史审计事实、native 函数名集合、唯一命中积攒入口与 stage 布局 |
 | `build/PluginBuilder/build-report.json` | Mutagen 记录结构检查 |
 | `build/papyrus/disasm/*.txt` / `build/ui/meter.tags.txt` | PEX 接口和 SWF 结构审计 |
 | [tools/verify_release.py](../tools/verify_release.py) | ZIP 与当前工作树一致性、CRC/哈希、原 MOD 基线 |
 
-已保存的 **2026-09-25 离线通过记录**如下，本次文档更新只读核对，未重新执行这些测试：
+以下是已保存的 **2026-09-25 离线通过记录**，对应 0.2.0 计时实现，属于历史记录：
 
 - `build/complete-0.2.0/rules-2.log`：65 个注册用例（含 16 个计时用例）+ 27 个夹具、881 断言，失败 0；旧命中/伤害用例仍包含在内。
-- `build/complete-0.2.0/bridge-final.log`：21 用例、205 断言，失败 0；报告中的四个 `GameBridge`/`RageState` 源文件 SHA-256 与本次工作树相同。
+- `build/complete-0.2.0/bridge-final.log`：21 用例、205 断言，失败 0；报告中的四个 `GameBridge`/`RageState` 源文件 SHA-256 对应 0.2.0 源码，只证明该版本。
 - `build/complete-0.2.0/regressions.json`：UI 协议 209 检查、心跳 17 测试、包测试 53 项及 native CTest 均退出 0。
 - `build/complete-0.2.0/release-audit.json`：插件检查 49 项、21 个归档条目、CRC/哈希和五个布局探针通过；`gameRuntimeTested=false` 是该次构建事实。
 - `build/diagnostic-0.1.1/completion.json` 记载历史 damage hook 68 检查及 `gameRuntimeTested=false`。这个数量不能冒充当前默认回归，也不能证明 hook 在游戏中触发。
@@ -556,16 +560,21 @@ python "$root\tools\verify_release.py"
 
 ### 9.5 用户实测状态与待留证边界
 
-2026-09-28 用户已反馈改为时间链路后 MOD 基本可用。这一反馈作为正向游戏体验证据保留；以下是尚未附逐项结果的检查项，**不等于用户完全没有测试，也不表示本轮已执行**：
+**0.2.0（历史）**：2026-09-28 用户已反馈改为时间链路后 MOD 基本可用。这一反馈作为 0.2.0 的正向游戏体验证据保留，未附逐项结果；它 **不证明 0.3.0 的命中语义**。0.2.0 当时尚未附逐项结果的计时项包括：默认上限约 50 秒充满、暂停/菜单/加载不补算、脱战/死亡清零、pending/raging 不阻止计时、读档不误清等。
 
-- 记录实际使用的包/DLL/PEX 哈希、runtime、SKSE 和 MO2 胜出文件，确保反馈对应 0.2.0。
-- 连续活跃战斗中从首个有效心跳基准开始，默认上限理想约 50 秒充满；每累计 1 秒 +2，不受攻击频率影响。VM 延迟大于 1.5 秒会被丢弃，实际用时可能更长；十档条长不能替代精确数值/时序采样。
-- 菜单、暂停、加载和长断档不增长、不补算；恢复首个心跳只建基准。
-- 真正脱战或死亡后清零，原变身不被主动 dispel；HUD 空条仍可常显。不要把 Papyrus 请求间隔写成即时响应保证。
-- 满怒正常触发一次反馈；激活成功只扣一次、失败不扣；pending/raging 本身不阻止计时，但仍阻止重复释放。
+**0.3.0（待用户验收）**：0.3.0 把积攒改为命中定额，以下需用户用 0.3.0 包逐项确认；离线测试不能证明引擎语义，**也不表示本轮已执行**：
+
+- 记录实际使用的包/DLL/PEX 哈希、runtime、SKSE 和 MO2 胜出文件，确保结论对应 0.3.0。
+- 首击是否计分；同一目标快速多段、多目标命中是否分别累计；默认上限 100 是否需要 50 次有效命中。十档条长不能替代精确计数。
+- 致命一击（事件到达时目标仍活着、入队后才死亡）是否计分；到达时已死亡是否拒绝。
+- 原 MOD 特殊攻击是否产生未格挡命中事件并计分；没有事件时不按动画推断命中。免疫但仍产生未格挡事件的情况是否计分。
+- 打空气、格挡、打友军/己方召唤物、打自己、打尸体是否不计分。
+- 暂停、菜单、加载中或读档尚未完成对账时的命中是否不计分。
+- 真正脱战或死亡后清零，原变身不被主动 dispel；HUD 空条仍可常显。
+- 满怒正常触发一次反馈；激活成功只扣一次、失败不扣；pending/raging 不阻止积攒但仍阻止重复释放。
 - 读档不在 Loading 过渡误清；恢复后仍在战斗才保留资源，真实脱战则清零。自定义上限、旧任务隔离、原费用/动画和 Scaleform 外观单独记录。
 
-新的实测结果应追加日期、环境、步骤与日志，不回写冻结发行包中的旧验收标记。
+新的实测结果应追加日期、环境、步骤与日志，写入 `docs/verification.md`，不回写冻结发行包中的旧验收标记。
 
 ## 10. 如何扩展：最小修改面与必须同步项
 
@@ -573,11 +582,11 @@ python "$root\tools\verify_release.py"
 
 ### 10.1 只调整现有数值或 HUD 设置
 
-用户实例配置内修改**仍生效**的已有字段即可，不必改源码。重新读档应用。不要通过旧 `rage.gain.*` 或 `maxGainPerSecond` 调计时速度，它们已停用；若要改每秒 +2，应另行修改并测试 `UpdateCombat`，不是配置任务。发布默认值变更则同步：
+用户实例配置内修改**仍生效**的已有字段即可，不必改源码。重新读档应用。不要通过旧 `rage.gain.*` 或 `maxGainPerSecond` 调积攒，它们已停用；若要改每个命中的 +2 或筛选规则，应另行修改并测试 `TryAwardCombatHit` 与桥接筛选，不是配置任务。发布默认值变更则同步：
 
 1. `data/config.default.json`。
 2. `KR_Config.psc` 对应 `Default*`；native 上限/规则默认变动时检查 `RageState.h`，HUD 同时核对 `KR_Widget` 与 AS2 fallback。旧收益默认差异见 3.1，不为文字一致而顺手改变历史规则。
-3. 当前计时/桥接/默认配置测试及版本对应的说明；旧命中夹具仅在变更其历史规则时才改。
+3. 当前命中定额/桥接/默认配置测试及版本对应的说明；旧命中夹具仅在变更其历史规则时才改。
 4. 官方 PEX、SWF（若涉及）、完整包测试后生成新版本包。
 
 不要直接改 stage 默认 JSON；`package_release.py` 会拒绝它与模板不一致，而不是帮你覆盖。
@@ -593,9 +602,9 @@ python "$root\tools\verify_release.py"
 ### 10.3 新装备资格与伤害方案不是同一扩展
 
 - 新装备涉及 native `IsAllowedEquipment`、`ResolveForms` 中的装备集合与 OAR 各源条件的双层检查，不以单改 ready gate 替代原装备条件；同步装备资格与激活测试。
-- 当前战斗积攒与攻击来源无关，新增攻击不需要向计时器登记。修改 `data/integration.json` 的历史攻击表不会使 DLL 增加计分来源。
-- 若另行决定恢复命中/伤害积攒，先选定“命中定额、掉血事件定额、伤害量比例”口径和证据门槛，见第 12 节；不能只把 `DamageHooks.cpp` 加回 CMake，因为当前 bridge 入口为空、旧计分规则与脱战语义不同，测试也明确约束只有计时通道。
-- 恢复时需明确敌我/召唤物、格挡/免疫、持续伤害、多目标、致命一击、去重和共享预算语义；本轮不实施这些改动，也不并行开启两个积攒来源。
+- 当前战斗积攒已由 `TESHitEvent` 驱动，不再与攻击来源白名单相关；新增攻击只要通过筛选规则即计分，不需要向 DLL 登记来源。修改 `data/integration.json` 的历史攻击表不会改变当前计分来源。
+- 若另行决定改为“确认造成掉血才计分”或“按伤害量比例计分”，先选定口径和证据门槛，见第 12 节；不能只把 `DamageHooks.cpp` 加回 CMake，因为当前 bridge 入口仍为空、旧计分规则与脱战语义不同。
+- 0.3.0 已明确敌我/召唤物、格挡、免疫、多目标、致命一击，以及“不去重、不设每秒预算”的语义；若再改口径需重新定义这些边界，且不得并行开启两个积攒来源。
 
 ### 10.4 新增 HUD 效果或身体反馈
 
@@ -642,16 +651,18 @@ UI 源码编译通过后，仍需授权的实际 Scaleform/游戏视觉验收；
 
 ## 11. 已知边界与禁止误判
 
-1. 已有用户对 0.2.0 时间链路“基本可用”的实测反馈，但没有逐项留证；不能宣称原费用、全部动画、Scaleform 外观或整合包兼容均已验收。
+1. 已有用户对 0.2.0 时间链路“基本可用”的实测反馈，但没有逐项留证；0.3.0 的命中定额尚未经游戏内验收，不能宣称首击、致命击、特殊攻击覆盖、原费用、全部动画、Scaleform 外观或整合包兼容均已验收。
 2. `IsAvailable()` 不是全面依赖探针；missing DLL/native binding 失败也不是普通的 false 分支。
 3. HUD 事件是表现提示，不是权威计数；UI Ready 与资源 ready 分开。当前 HUD 常显、十档且无数字，条长不变不必然代表账本不变。
-4. 请求排队不等于下一帧，deadline 不等于精准定时；alias 单发心跳在非战斗、非 pending/raging 时也继续。它是低频采样，不是“完全不轮询”。
-5. SEQ/FormID 高字节为文件内映射，不能据此要求用户改到特定加载槽；不要把推测写成已知加载顺序缺陷。
-6. `data/integration.json` 改了不会自动改变 DLL；它是审计事实而非运行配置。
-7. 完整包测试在原 MOD 缺失的机器上会跳过部分对原文件的检查；发行审计则要求基线和原 MOD 都存在。不能把带 skip 的运行说成同等覆盖。
-8. 旧规则测试末尾仍有 `SPEC-GAP-EXPECTED-FAIL` 历史说明；以实际每项 PASS/FAIL 与退出码为准，不豁免失败。
-9. 没有卸载清理、没有热卸载无残留保证。回退使用安装前成对备份 `.ess`/`.skse`。
-10. 文档/注释与实际实现冲突时先复核源码和产物，不为了让文字成立去改用户正在测试的行为。
+4. 请求排队不等于下一帧，deadline 不等于精准定时；alias 单发心跳在非战斗、非 pending/raging 时也继续，`TickCombat` 不再按时间授予。它是低频采样，不是“完全不轮询”。
+5. 命中事件从入队到执行之间目标可能死亡或世界已切换，故执行时再次校验句柄与敌我；到达时活着、入队后才死亡不因排队拒绝，是刻意的语义，不要据此宣称所有致命击都必然计分，需游戏内确认事件顺序。
+6. 不验证目标实际掉血：免疫但产生未格挡命中事件仍计分，这是需求选择而非缺陷；无事件的原 MOD 特殊攻击不被推断为命中。
+7. SEQ/FormID 高字节为文件内映射，不能据此要求用户改到特定加载槽；不要把推测写成已知加载顺序缺陷。
+8. `data/integration.json` 改了不会自动改变 DLL；它是审计事实而非运行配置。本补丁 0.3.0 不再需要 PO3，但这不授权删除原 MOD 或整合包中其他 MOD 的前置。
+9. 完整包测试在原 MOD 缺失的机器上会跳过部分对原文件的检查；发行审计则要求基线和原 MOD 都存在。不能把带 skip 的运行说成同等覆盖。
+10. 旧规则测试末尾仍有 `SPEC-GAP-EXPECTED-FAIL` 历史说明；以实际每项 PASS/FAIL 与退出码为准，不豁免失败。
+11. 没有卸载清理、没有热卸载无残留保证。回退使用安装前成对备份 `.ess`/`.skse`。
+12. 文档/注释与实际实现冲突时先复核源码和产物，不为了让文字成立去改用户正在测试的行为。
 
 **接手完成条件：** 能指出事件在哪里进入、状态由谁拥有、失败在哪里保留资源、加载如何对账、界面从哪里读状态、发行物如何复核；提出的每个扩展都有对应的源码修改面与测试，而不是仅在某一层增加一个看似工作的入口。
 
@@ -661,15 +672,16 @@ UI 源码编译通过后，仍需授权的实际 Scaleform/游戏视觉验收；
 
 ### 12.1 历史实际证明了什么
 
-复盘截至运行时代码基线 `0564148`：只有 `944de33` 和 `0564148` 两个 Git 提交，二者日期均为 2026-09-25。前者已是 0.1.1 诊断版快照，不是每次失败尝试的完整过程；0.1.0 的细节需结合旧发行包、早期说明和留存日志。后续文档提交不代表又发生了运行时迭代。
+复盘截至 0.2.0 运行时代码基线 `0564148`：当时只有 `944de33` 和 `0564148` 两个 Git 提交，二者日期均为 2026-09-25（其后 `73ef14f` 为 0.2.0 文档提交）。前者已是 0.1.1 诊断版快照，不是每次失败尝试的完整过程；0.1.0 的细节需结合旧发行包、早期说明和留存日志。后续文档提交不代表又发生了运行时迭代。
 
 | 阶段 | 实际积攒口径 | 可追溯材料 |
 | --- | --- | --- |
 | 0.1.0（2026-09-24） | PO3 命中/受击/击杀事件，按类别固定给分，去重与共享预算 | 旧 README、`dist` 的 0.1.0 ZIP、历史规则/夹具、9 月 24 日游戏日志 |
 | 0.1.1 diagnostic / UI-r1 | 原生生命伤害 hook；确认目标掉血后每次报告 +2，所有目标共享滚动 10/秒 | `944de33` 的 `DamageHooks.cpp`、`GameBridge.cpp`、诊断包和离线报告 |
 | 0.2.0 | 活跃战斗时间每累计 1 秒 +2，脱战/死亡清零；伤害入口停用 | `0564148`、计时回归与发行审计、用户“基本可用”的反馈 |
+| 0.3.0（2026-09-29） | 原版 `TESHitEvent`，每个通过筛选的命中固定 +2，无去重/预算；伤害与计时授予停用 | 0.3.0 命中定额实现、命中定额测试与包契约；游戏内证据待用户验收 |
 
-**三种需求不能混称“伤害积攒”。** “命中就加固定值”只需要可靠命中事实；“确实造成掉血才加固定值”还要验证伤害与归因；“伤害越高加得越多”还要定义最终伤害量与换算。历史 0.1.1 属于第二种，而不是第三种：`GameBridge::AwardPlayerDamage` 当时只用 `healthLost>0` 验证，随后调用没有伤害数值参数的 `RageState::TryAwardPlayerDamage(now)`。当前保留的 [RageState.cpp](../src/RageState.cpp) 第 102–126 行仍能核对固定 +2 的规则。
+**三种需求不能混称“伤害积攒”。** “命中就加固定值”只需要可靠命中事实；“确实造成掉血才加固定值”还要验证伤害与归因；“伤害越高加得越多”还要定义最终伤害量与换算。历史 0.1.1 属于第二种，而不是第三种：`GameBridge::AwardPlayerDamage` 当时只用 `healthLost>0` 验证，随后调用没有伤害数值参数的 `RageState::TryAwardPlayerDamage(now)`。0.3.0 采用的是**第一种**口径：只使用原生命中事件，不确认掉血，也不读取伤害量；当前保留的 [RageState.cpp](../src/RageState.cpp) 第 102–126 行仍能核对旧固定 +2 的规则。
 
 时间版的成功没有证明旧版“差一个参数就能修好”，也没有证明伤害路线做不到。它证明的是换成更简单的输入后，现有账本、释放与表现链在用户环境中取得了初步可用结果。
 
@@ -719,7 +731,7 @@ UI 源码编译通过后，仍需授权的实际 Scaleform/游戏视觉验收；
 
 账本、上限、满怒通知、ready marker、激活 token、存档和原动画/HUD 集成都可继续复用，只需针对新语义回归。时间版只需定期读取玩家战斗状态和时钟，不必等待转瞬即逝的攻击事件，也不必重建攻击来源，因此显著缩短了故障定位范围；代价是空挥、输出高低不影响充能速度。
 
-恢复伤害不是“把旧文件打开”：0.2.0 的 `SubmitPlayerDamage` 已为空实现，默认 DLL 不含 `DamageHooks.cpp`，桥接/包测试明确断言只由计时授予，还新增了脱战清零语义。合理路径是保留可用基线，先验证最小伤害入口，再决定替换；不是直接回退到旧诊断包并丢掉后续修复。
+恢复伤害不是“把旧文件打开”：0.2.0 的 `SubmitPlayerDamage` 已为空实现，默认 DLL 不含 `DamageHooks.cpp`，桥接/包测试当时明确断言只由计时授予，还新增了脱战清零语义。合理路径是保留可用基线，先验证最小伤害入口，再决定替换；不是直接回退到旧诊断包并丢掉后续修复。
 
 ### 12.4 完成难度分档
 
@@ -734,7 +746,7 @@ UI 源码编译通过后，仍需授权的实际 Scaleform/游戏视觉验收；
 
 若再要求任意整合包、任意脚本伤害、全部召唤物归因或多个 runtime，范围会明显扩大，不能沿用上表估算。反之，若最小探针证实只有一个简单时序判断或加载前置问题，限定方案的实现成本会下降；现有材料不足以给可靠天数或声称“已完成 80%”。
 
-**建议：当前正式使用继续保留时间版。** 如果后续目标只是让“打中敌人”影响节奏，优先评估限定范围的命中定额，避免为此承担精确计量全部伤害的成本。若明确需要“实际掉血才有怒气”，再投入第二档入口验证；不要直接把范围扩大到所有来源的精确伤害比例。
+**建议（0.2.0 时点）是继续保留时间版；2026-09-29 用户已决定采用限定范围的命中定额**，即上表“可靠命中后固定加值，限定攻击范围”一档，落地为 0.3.0。它避开精确计量全部伤害的成本，但仍需在游戏内确认首击、致命击与特殊攻击覆盖。若之后明确需要“实际掉血才有怒气”，再按 12.5 的门槛投入第二档入口验证；不要直接把范围扩大到所有来源的精确伤害比例。
 
 ### 12.5 将来重启伤害方案的最小验收门槛
 

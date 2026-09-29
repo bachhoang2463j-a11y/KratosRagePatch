@@ -11,6 +11,21 @@ T* Lookup(std::uint32_t id, std::string_view plugin)
     auto* data = RE::TESDataHandler::GetSingleton();
     return data ? data->LookupForm<T>(id, plugin) : nullptr;
 }
+
+const char* RejectHitTarget(RE::Actor* target, RE::Actor* player)
+{
+    if (target == player) {
+        return "self";
+    }
+    if (target->IsPlayerTeammate()) {
+        return "teammate";
+    }
+    const auto commander = target->GetCommandingActor();
+    if (commander && (commander.get() == player || commander->IsPlayerTeammate())) {
+        return "commanded_ally";
+    }
+    return target->IsHostileToActor(player) ? nullptr : "not_hostile";
+}
 }
 
 GameBridge& GameBridge::Get()
@@ -89,6 +104,7 @@ void GameBridge::Initialize()
         if (auto* events = RE::ScriptEventSourceHolder::GetSingleton()) {
             events->AddEventSink<RE::TESMagicEffectApplyEvent>(this);
             events->AddEventSink<RE::TESCombatEvent>(this);
+            events->AddEventSink<RE::TESHitEvent>(this);
             registered_ = true;
         }
     }
@@ -189,6 +205,7 @@ void GameBridge::UpdateStateFromGame()
     const bool actualRaging = HasActiveEffect(player, rageEffect_);
     // Do not dispel the original transformation when clearing the combat resource.
     if (!player->IsInCombat() || player->IsDead()) {
+        ++hitContext_;
         activation_.reset();   // EndCombat 会清 pending，激活令牌必须同步作废，防止旧 token 被再认领
         state_.EndCombat();
     }
@@ -231,8 +248,6 @@ void GameBridge::RefreshEquipmentState()
     Queue([this] { UpdateStateFromGame(); });
 }
 
-// Papyrus 0.5s 单发心跳：唯一怒气增长通道。战斗中每满 1 秒 +2；菜单/暂停/非战斗
-// 不增长也不补时间；脱战或死亡由 UpdateStateFromGame/UpdateCombat 清零。
 void GameBridge::TickCombat()
 {
     Queue([this] {
@@ -240,8 +255,7 @@ void GameBridge::TickCombat()
             return;
         }
         auto* player = RE::PlayerCharacter::GetSingleton();
-        if (!player) {
-            state_.SuspendCombatTimer();
+        if (!player || needsReconcile_ || IsLoadingTransition()) {
             return;
         }
         const bool inCombat = player->IsInCombat() && !player->IsDead();
@@ -253,32 +267,84 @@ void GameBridge::TickCombat()
             combatHeartbeatLogged_ = true;
             spdlog::info("KratosRage combat heartbeat received");
         }
-        const auto before = state_.GetSnapshot();
         UpdateStateFromGame();
-        AwardResult result{};
-        if (needsReconcile_ || IsLoadingTransition()) {
-            // 读档/Loading 过渡：权威 combat 尚未拉取，心跳只停表，绝不在此阶段清掉存档怒气。
-            state_.SuspendCombatTimer();
-        } else {
-            result = state_.UpdateCombat(Now(), inCombat, IsUISuspended());
-            if (!inCombat && activation_) {
-                // 双保险：EndCombat 清 pending 时激活令牌必须同步作废。
-                activation_.reset();
-            }
-        }
-        const auto after = state_.GetSnapshot();
-        if (result.awarded > 0 || before.current != after.current) {
-            SyncReadyMarker();
-            Notify("KR_RageChanged");
-        }
-        if (result.becameFull) {
-            spdlog::info("KratosRage rage reached maximum via combat timer");
-            Notify("KR_RageBecameFull");
-        }
     });
 }
 
-// UI/暂停判定：任一命中即视为本 tick 不在活跃游戏时间，时钟只停不补。
+void GameBridge::TraceCombatHit(const CombatHit& hit, const char* result, int awarded)
+{
+    auto& trace = hitTraces_[result];
+    ++trace.count;
+    const auto now = Now();
+    if (now - trace.last < 1.0) {
+        ++trace.suppressed;
+        return;
+    }
+    const auto snapshot = state_.GetSnapshot();
+    spdlog::info("KratosRage hit {}: seq={} generation={} context={} cause={:08X} target={:08X} "
+                 "source={:08X} projectile={:08X} flags={:02X} award={} rage={}/{} count={} suppressed={}",
+        result, hit.sequence, generation_, hit.context, hit.causeID, hit.targetID,
+        hit.sourceID, hit.projectileID, hit.flags, awarded, snapshot.current, snapshot.maximum,
+        trace.count, trace.suppressed);
+    trace.last = now;
+    trace.suppressed = 0;
+}
+
+void GameBridge::ProcessCombatHit(const CombatHit& hit)
+{
+    if (!available_) {
+        TraceCombatHit(hit, "unavailable");
+        return;
+    }
+    if (needsReconcile_) {
+        TraceCombatHit(hit, "unreconciled");
+        return;
+    }
+    if (hit.context != hitContext_) {
+        TraceCombatHit(hit, "stale_context");
+        return;
+    }
+    if (IsLoadingTransition()) {
+        TraceCombatHit(hit, "loading");
+        return;
+    }
+    if (IsUISuspended()) {
+        TraceCombatHit(hit, "suspended");
+        return;
+    }
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player) {
+        TraceCombatHit(hit, "no_player");
+        return;
+    }
+    UpdateStateFromGame();
+    if (player->IsDead() || !player->IsInCombat()) {
+        TraceCombatHit(hit, player->IsDead() ? "player_dead" : "out_of_combat");
+        return;
+    }
+    const auto target = hit.target.get();
+    if (!target || target->GetFormID() != hit.targetID) {
+        TraceCombatHit(hit, "invalid_handle");
+        return;
+    }
+    if (const auto* reason = RejectHitTarget(target.get(), player)) {
+        TraceCombatHit(hit, reason);
+        return;
+    }
+    // Death is sampled on arrival; queue latency must not turn an accepted live target into a corpse hit.
+    const auto result = state_.TryAwardCombatHit(true, false);
+    TraceCombatHit(hit, result.awarded > 0 ? "awarded" : "at_maximum", result.awarded);
+    if (result.awarded > 0) {
+        SyncReadyMarker();
+        Notify("KR_RageChanged");
+    }
+    if (result.becameFull) {
+        TraceCombatHit(hit, "became_full", result.awarded);
+        Notify("KR_RageBecameFull");
+    }
+}
+
+// UI 单例缺失时也保守拒绝授予，避免加载间隙误计。
 bool GameBridge::IsUISuspended() const
 {
     if (auto* ui = RE::UI::GetSingleton()) {
@@ -287,7 +353,7 @@ bool GameBridge::IsUISuspended() const
             return true;
         }
     } else {
-        return true;  // UI 单例缺失时保守停表
+        return true;  // UI 单例缺失时保守拒绝
     }
     if (auto* main = RE::Main::GetSingleton()) {
         if (main->freezeTime || !main->gameActive) {
@@ -309,7 +375,7 @@ bool GameBridge::IsLoadingTransition() const
 // Legacy entry retained for source and test compatibility; damage hooks are no longer installed.
 void GameBridge::SubmitPlayerDamage(RE::FormID, RE::FormID, float) {}
 
-// 0.2.0 起计分只走 TickCombat 战斗心跳；以下旧 PEX 入口保留签名供旧脚本调用，全部无操作。
+// 旧 PEX 入口保留签名供旧脚本调用；原生命中 sink 是唯一计分入口。
 void GameBridge::SubmitWeaponHit(RE::TESObjectREFR*, RE::TESForm*, RE::BGSProjectile*, int) {}
 
 void GameBridge::SubmitMagicHit(RE::TESObjectREFR*, RE::TESForm*, RE::BGSProjectile*) {}
@@ -505,23 +571,90 @@ RE::BSEventNotifyControl GameBridge::ProcessEvent(const RE::TESMagicEffectApplyE
     return RE::BSEventNotifyControl::kContinue;
 }
 
+RE::BSEventNotifyControl GameBridge::ProcessEvent(const RE::TESHitEvent* event,
+    RE::BSTEventSource<RE::TESHitEvent>*)
+{
+    if (!event) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+    std::lock_guard lock(mutex_);
+    CombatHit hit;
+    hit.causeID = event->cause ? event->cause->GetFormID() : 0;
+    hit.targetID = event->target ? event->target->GetFormID() : 0;
+    hit.sourceID = event->source;
+    hit.projectileID = event->projectile;
+    hit.flags = event->flags.underlying();
+    hit.sequence = ++hitSequence_;
+    hit.context = hitContext_;
+    TraceCombatHit(hit, "received");
+    const auto reject = [&](const char* reason) {
+        TraceCombatHit(hit, reason);
+        return RE::BSEventNotifyControl::kContinue;
+    };
+    if (!available_) {
+        return reject("unavailable");
+    }
+    if (needsReconcile_) {
+        return reject("unreconciled");
+    }
+    if (IsLoadingTransition()) {
+        return reject("loading");
+    }
+    if (IsUISuspended()) {
+        return reject("suspended");
+    }
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player) {
+        return reject("no_player");
+    }
+    if (event->cause.get() != player) {
+        return reject("not_player");
+    }
+    if (player->IsDead() || !player->IsInCombat()) {
+        return reject(player->IsDead() ? "player_dead" : "out_of_combat");
+    }
+    if (event->flags.any(RE::TESHitEvent::Flag::kHitBlocked)) {
+        return reject("blocked");
+    }
+    auto* target = event->target ? event->target->As<RE::Actor>() : nullptr;
+    if (!target) {
+        return reject("not_actor");
+    }
+    if (target->IsDead()) {
+        return reject("target_dead_on_arrival");
+    }
+    if (const auto* reason = RejectHitTarget(target, player)) {
+        return reject(reason);
+    }
+    if (!SKSE::GetTaskInterface()) {
+        return reject("no_task_interface");
+    }
+    hit.target = target->GetHandle();
+    Queue([this, hit] { ProcessCombatHit(hit); });
+    return RE::BSEventNotifyControl::kContinue;
+}
+
 RE::BSEventNotifyControl GameBridge::ProcessEvent(const RE::TESCombatEvent* event,
     RE::BSTEventSource<RE::TESCombatEvent>*)
 {
-    if (event && event->actor.get() == RE::PlayerCharacter::GetSingleton()) {
+    std::lock_guard lock(mutex_);
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (event && player && event->actor.get() == player) {
+        if (!player->IsInCombat() || player->IsDead()) {
+            ++hitContext_;
+        }
         Queue([this] { UpdateStateFromGame(); });
     }
     return RE::BSEventNotifyControl::kContinue;
 }
 
-// 任何菜单的打开或关闭都把战斗时钟的起点抹掉：短暂暂停也不产生可补算的间隔。
-// 只在锁内停表，不捕获事件指针入队。
+// A menu round trip can finish before a queued hit runs; do not replay that hit after resuming.
 RE::BSEventNotifyControl GameBridge::ProcessEvent(const RE::MenuOpenCloseEvent* event,
     RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
 {
     if (event) {
         std::lock_guard lock(mutex_);
-        state_.SuspendCombatTimer();
+        ++hitContext_;
     }
     return RE::BSEventNotifyControl::kContinue;
 }

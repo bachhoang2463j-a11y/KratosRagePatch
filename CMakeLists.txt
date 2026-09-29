@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(KratosRagePatch VERSION 0.2.0 LANGUAGES CXX)
+project(KratosRagePatch VERSION 0.3.0 LANGUAGES CXX)
 
 option(KR_BUILD_PLUGIN "Build Skyrim native plugin" ON)
 set(CMAKE_CXX_STANDARD 23)
@@ -20,6 +20,7 @@ if(BUILD_TESTING)
         tests/RageStateTests.cpp
         tests/PlayerDamageTests.cpp
         tests/CombatTimerTests.cpp
+        tests/CombatHitTests.cpp
         tests/ActivationTests.cpp
         tests/SerializationTests.cpp)
     target_link_libraries(KratosRageTests PRIVATE KratosRageRules)

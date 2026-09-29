@@ -14,6 +14,8 @@
 //        必须走 actor->AsMagicTarget()->GetActiveEffectList()；
 //      - MagicTarget::GetActiveEffectList() 非 const，返回 BSSimpleList<ActiveEffect*>*；
 //      - BSSimpleList 只提供真实存在的成员（begin/end/empty/clear/push_front/Node）。
+//      - TESHitEvent 成员/顺序/flags 底层类型按真实 header 镜像（flags 为 enumeration<Flag,uint8_t>）；
+//        ActorHandle 只保留 get()/比较，按 FormID 查当前 registry（见类注释）。
 //  * 全部接口 inline（header-only）：同一个 header 既被被测的 GameBridge.cpp
 //    通过同目录 fake PCH.h 引入，也被用例驱动直接引入。
 //  * 因此本文件通过 = 「桥接逻辑在当前源码下自洽」，不等于游戏内验证。
@@ -40,12 +42,73 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// spdlog 桩：GameBridge 只写日志，日志文本不属于桥接逻辑，直接吞掉。
+// 日志观测：spdlog 桩不再吞掉输出，而是把「级别 + 格式串 + 各实参」按调用顺序
+// 记进 krfake::Logs()，供用例核对桥接实际输出的字段（类别/序号/来源/投射物/flags/
+// 限流计数）与限流行为。只记录调用事实，不复写任何桥接判定；数值参数统一转十进制
+// 字符串，不实现 {:X} 等格式化（那是 spdlog 的职责，桥接只依赖其存在）。
 // ---------------------------------------------------------------------------
+namespace krfake {
+
+struct LogRecord {
+    std::string level;
+    std::string format;
+    std::vector<std::string> args;
+};
+
+inline std::vector<LogRecord>& Logs()
+{
+    static std::vector<LogRecord> value;
+    return value;
+}
+
+namespace logtext {
+
+template <class T>
+inline std::string ToText(T&& value)
+{
+    using U = std::remove_cvref_t<T>;
+    if constexpr (std::is_same_v<U, std::string> || std::is_same_v<U, std::string_view>) {
+        return std::string(value);
+    } else if constexpr (std::is_same_v<U, bool>) {
+        return value ? "true" : "false";
+    } else if constexpr (std::is_convertible_v<U, const char*>) {
+        return value ? std::string(value) : std::string("(null)");
+    } else if constexpr (std::is_floating_point_v<U>) {
+        return std::to_string(static_cast<double>(value));
+    } else if constexpr (std::is_arithmetic_v<U>) {
+        return std::to_string(value);
+    } else {
+        return std::string("(arg)");
+    }
+}
+
+template <class... A>
+inline std::vector<std::string> All(A&&... args)
+{
+    std::vector<std::string> out;
+    out.reserve(sizeof...(A));
+    (out.push_back(ToText(std::forward<A>(args))), ...);
+    return out;
+}
+
+}  // namespace logtext
+
+}  // namespace krfake
+
 namespace spdlog {
-template <class... A> inline void info(const char*, A&&...) {}
-template <class... A> inline void warn(const char*, A&&...) {}
-template <class... A> inline void error(const char*, A&&...) {}
+
+namespace detail {
+template <class... A>
+inline void Record(const char* level, const char* format, A&&... args)
+{
+    krfake::Logs().push_back(
+        krfake::LogRecord{level ? level : "", format ? format : "", krfake::logtext::All(std::forward<A>(args)...)});
+}
+}  // namespace detail
+
+template <class... A> inline void info(const char* format, A&&... args) { detail::Record("info", format, std::forward<A>(args)...); }
+template <class... A> inline void warn(const char* format, A&&... args) { detail::Record("warn", format, std::forward<A>(args)...); }
+template <class... A> inline void error(const char* format, A&&... args) { detail::Record("error", format, std::forward<A>(args)...); }
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +222,7 @@ class Main;
 struct TESMagicEffectApplyEvent;
 struct TESDeathEvent;
 struct TESCombatEvent;
+struct TESHitEvent;
 struct MenuOpenCloseEvent;
 
 namespace BSScript {
@@ -324,6 +388,32 @@ private:
     element_type* ptr_{};
 };
 
+// 真实 RE::ActorHandle（RE/B/BSPointerHandle.h：using ActorHandle = BSPointerHandle<Actor>）：
+// 默认构造 / 拷贝 / get() -> NiPointer<Actor> / 相等比较。fake 只保留 GameBridge 用得到的部分。
+// 关键差异（刻意的最小实现）：真实句柄由句柄管理器解析；fake 只按捕获时的 FormID 查**当前**
+// registry，因此从 registry 删除映射即可模拟"对象已销毁 / 句柄失效"，而不是永久裸指针。
+// 不含引用计数、句柄槽位与 operator= from Y*（GameBridge 只用 GetHandle() 产出句柄）。
+class ActorHandle {
+public:
+    ActorHandle() = default;
+    explicit ActorHandle(FormID a_id) : formID_(a_id) {}
+
+    // 实现见文件末尾：需要 registry 查找与完整的 Actor 类型（dynamic_cast）。
+    [[nodiscard]] NiPointer<Actor> get() const;
+
+    [[nodiscard]] friend bool operator==(const ActorHandle& a_lhs, const ActorHandle& a_rhs) noexcept
+    {
+        return a_lhs.formID_ == a_rhs.formID_;
+    }
+    [[nodiscard]] friend bool operator!=(const ActorHandle& a_lhs, const ActorHandle& a_rhs) noexcept
+    {
+        return !(a_lhs == a_rhs);
+    }
+
+private:
+    FormID formID_{};
+};
+
 }  // namespace RE
 
 // ---------------------------------------------------------------------------
@@ -387,6 +477,18 @@ inline bool& SpinFlag()
     static bool value = false;
     return value;
 }
+// 单例缺失模拟：置位时对应 GetSingleton 返回 nullptr，用于核对桥接对 UI / Main
+// 缺失时的保守拒绝（生产里这两个单例同样可能尚未就绪）。
+inline bool& UIUnavailable()
+{
+    static bool value = false;
+    return value;
+}
+inline bool& MainUnavailable()
+{
+    static bool value = false;
+    return value;
+}
 template <class T> inline std::vector<RE::BSTEventSink<T>*>& SinkList()
 {
     static std::vector<RE::BSTEventSink<T>*> value;
@@ -411,6 +513,8 @@ void OnCastApply(RE::SpellItem* spell, RE::EffectSetting* effect);  // 施放 sp
 void FireMagicEffect(const RE::TESMagicEffectApplyEvent& event);
 void FireDeath(const RE::TESDeathEvent& event);
 void FireCombat(const RE::TESCombatEvent& event);
+void FireHit(const RE::TESHitEvent& event);
+void FireMenuOpenClose(const RE::MenuOpenCloseEvent& event);
 int DrainAll(int maxSteps = 10000);   // 跑到队列空；超过 maxSteps 判定同帧自旋
 void RunFrame();                      // 只跑进入时已入队的任务（等价一帧）
 int CastCount(RE::SpellItem* spell);
@@ -428,6 +532,10 @@ RE::TESObjectWEAP* AddWeapon(int plugin, std::uint32_t localID);
 RE::TESObjectARMO* AddArmor(int plugin, std::uint32_t localID);
 RE::Actor* AddActor(RE::FormID fullID);
 RE::PlayerCharacter* AddPlayer(RE::FormID fullID);
+
+// 删除 registry 中按全 FormID 的映射，模拟"对象已销毁 / ActorHandle 失效"；
+// ResetScenario 会把用例删除的 actor/player 映射恢复回来。
+void DropMapping(RE::FormID id);
 
 }  // namespace krfake
 
@@ -638,6 +746,8 @@ public:
     bool IsPlayerTeammate() const { return teammate; }
     bool IsHostileToActor(Actor*) const { return hostile; }
     NiPointer<Actor> GetCommandingActor() const { return NiPointer<Actor>(commander); }
+    // 真实签名非 const：[[nodiscard]] ActorHandle GetHandle();
+    [[nodiscard]] ActorHandle GetHandle() { return ActorHandle(GetFormID()); }
     TESForm* GetEquippedObject(bool leftHand) const { return leftHand ? equippedLeft : equippedRight; }
 
     // 真实签名：Actor::AsMagicTarget() noexcept / const 版本返回 const MagicTarget*（0x98/0xA0）。
@@ -704,6 +814,25 @@ struct TESCombatEvent {
     NiPointer<TESObjectREFR> actor;
 };
 
+// 真实 RE::TESHitEvent（vendor/CommonLibSSE-NG/include/RE/T/TESHitEvent.h）：
+// target/cause 为 NiPointer<TESObjectREFR>，source/projectile 为 FormID，
+// flags 为 stl::enumeration<Flag, std::uint8_t>（注意真实底层类型是 uint8_t）。
+struct TESHitEvent {
+    enum class Flag {
+        kNone = 0,
+        kPowerAttack = 1 << 0,
+        kSneakAttack = 1 << 1,
+        kBashAttack = 1 << 2,
+        kHitBlocked = 1 << 3
+    };
+
+    NiPointer<TESObjectREFR> target;              // 00
+    NiPointer<TESObjectREFR> cause;               // 08
+    FormID source{};                              // 10
+    FormID projectile{};                          // 14
+    stl::enumeration<Flag, std::uint8_t> flags;   // 18
+};
+
 // 真实 RE::MenuOpenCloseEvent（RE/U/UIMessage.h 旁）：成员名按真实 header 镜像。
 struct MenuOpenCloseEvent {
     BSFixedString menuName;
@@ -745,7 +874,7 @@ public:
     static UI* GetSingleton()
     {
         static UI instance;
-        return &instance;
+        return krfake::UIUnavailable() ? nullptr : &instance;
     }
 
     template <class T> void AddEventSink(BSTEventSink<T>* sink)
@@ -787,7 +916,7 @@ public:
     static Main* GetSingleton()
     {
         static Main instance;
-        return &instance;
+        return krfake::MainUnavailable() ? nullptr : &instance;
     }
 
     bool freezeTime{};
@@ -966,6 +1095,16 @@ inline void FireCombat(const RE::TESCombatEvent& event)
     }
 }
 
+inline void FireHit(const RE::TESHitEvent& event)
+{
+    const auto sinks = SinkList<RE::TESHitEvent>();
+    for (auto* sink : sinks) {
+        if (sink) {
+            sink->ProcessEvent(&event, nullptr);
+        }
+    }
+}
+
 inline void FireMenuOpenClose(const RE::MenuOpenCloseEvent& event)
 {
     const auto sinks = SinkList<RE::MenuOpenCloseEvent>();
@@ -1047,7 +1186,10 @@ inline void ResetScenario()
     ModEvents().clear();
     CastReactions().clear();
     Tasks().clear();
+    Logs().clear();
     SpinFlag() = false;
+    UIUnavailable() = false;
+    MainUnavailable() = false;
 
     if (auto* ui = RE::UI::GetSingleton()) {
         ui->paused = false;
@@ -1087,7 +1229,22 @@ inline void ResetScenario()
         player->spells.clear();
     }
     registry.effectOwner.clear();
+    // 用例可能用 DropMapping 模拟句柄失效删掉了 actor/player 的全 FormID 映射；对象本身由
+    // owner 列表长期持有，这里把映射恢复回来，避免"删除映射"泄漏到下一个用例。
+    for (auto& actor : registry.actorOwner) {
+        registry.byFullID[actor->GetFormID()] = actor.get();
+    }
+    for (auto& player : registry.playerOwner) {
+        registry.byFullID[player->GetFormID()] = player.get();
+    }
+    // 用例可能把 PlayerSlot 置空模拟"缺玩家"；这里恢复成已注册玩家，避免泄漏到下一个用例。
+    PlayerSlot() = registry.playerOwner.empty() ? nullptr : registry.playerOwner.front().get();
     // 事件 sink 不清：GameBridge 只在首次 Initialize 注册一次，且单例长期存活。
+}
+
+inline void DropMapping(RE::FormID id)
+{
+    detail::Reg().byFullID.erase(id);
 }
 
 inline int AddPlugin(const std::string& name)
@@ -1180,6 +1337,13 @@ inline void MagicCaster::CastSpellImmediate(SpellItem* spell, bool, Actor* targe
     // target 为 null 表示非自指施法；按真实语义取施法者身上落效果（reaction 用）。
     krfake::RecordCast(spell, target, effectiveness, magnitude);
     krfake::ApplyCastReactions(spell, target ? target : caster);
+}
+
+inline NiPointer<Actor> ActorHandle::get() const
+{
+    // 按捕获时的 FormID 查“当前”registry：映射被删除（DropMapping）即解析失败，
+    // 模拟真实句柄在后端对象失效后解析为空。
+    return NiPointer<Actor>(dynamic_cast<Actor*>(krfake::FindByFullID(formID_)));
 }
 
 }  // namespace RE

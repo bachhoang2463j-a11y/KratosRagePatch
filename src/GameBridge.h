@@ -7,6 +7,7 @@ namespace kr {
 
 class GameBridge final : public RE::BSTEventSink<RE::TESMagicEffectApplyEvent>,
                          public RE::BSTEventSink<RE::TESCombatEvent>,
+                         public RE::BSTEventSink<RE::TESHitEvent>,
                          public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
     static GameBridge& Get();
@@ -31,12 +32,31 @@ public:
 
     RE::BSEventNotifyControl ProcessEvent(const RE::TESMagicEffectApplyEvent*, RE::BSTEventSource<RE::TESMagicEffectApplyEvent>*) override;
     RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent*, RE::BSTEventSource<RE::TESCombatEvent>*) override;
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent*, RE::BSTEventSource<RE::TESHitEvent>*) override;
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent*, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override;
 
 private:
     struct CastSpec { RE::SpellItem* spell; float effectiveness; float magnitude; bool selfTarget; };
+    struct CombatHit {
+        RE::ActorHandle target;
+        RE::FormID causeID{};
+        RE::FormID targetID{};
+        RE::FormID sourceID{};
+        RE::FormID projectileID{};
+        std::uint64_t sequence{};
+        std::uint64_t context{};
+        std::uint8_t flags{};
+    };
+
+    struct HitTrace {
+        double last{-1000.0};
+        std::uint64_t count{};
+        std::uint64_t suppressed{};
+    };
 
     void Queue(std::function<void()> task);
+    void ProcessCombatHit(const CombatHit& hit);
+    void TraceCombatHit(const CombatHit& hit, const char* result, int awarded = 0);
     bool ResolveForms();
     bool IsAllowedEquipment(RE::Actor*) const;
     bool HasActiveEffect(RE::Actor*, RE::EffectSetting*) const;
@@ -68,6 +88,9 @@ private:
     double lastActivation_{-1000.0};
     double activationDeadline_{};
     std::uint64_t generation_{};
+    std::uint64_t hitContext_{};
+    std::uint64_t hitSequence_{};
+    std::unordered_map<std::string, HitTrace> hitTraces_;
     std::optional<std::uint64_t> activation_;
     RE::EffectSetting* rageEffect_{};
     RE::SpellItem* rageSpell_{};

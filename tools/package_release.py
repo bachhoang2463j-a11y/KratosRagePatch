@@ -82,22 +82,26 @@ def validate_stage():
 def main():
     parser = argparse.ArgumentParser(description='Package the verified independent MO2 patch')
     parser.add_argument('--output', type=Path,
-                        default=ROOT / 'dist/KratosRagePatch-0.2.0-skyrim-1.6.640.zip')
+                        default=ROOT / 'dist/KratosRagePatch-0.3.0-skyrim-1.6.640.zip')
     parser.add_argument('--baseline', type=Path, default=ROOT / 'build/resume-original-sha256.json')
     args = parser.parse_args()
-    if args.output.exists():
-        raise FileExistsError(f'Release already exists; choose a new output name: {args.output}')
+    checksum = args.output.with_suffix(args.output.suffix + '.sha256')
+    for path in (args.output, checksum):
+        if path.exists():
+            raise FileExistsError(f'Release already exists; choose a new output name: {path}')
     original_count = original_unchanged(args.baseline)
     plugin_checks = validate_stage()
     files = {name: (STAGE / name).read_bytes() for name in sorted(REQUIRED)}
     for dependency in ('CommonLibSSE-NG', 'fmt', 'spdlog', 'rapidcsv'):
         files[f'Docs/KratosRage/licenses/{dependency}.txt'] = (ROOT / 'vendor' / dependency / 'LICENSE').read_bytes()
     manifest = {
-        'version': '0.2.0',
+        'version': '0.3.0',
         'hudDisplay': {'numericReadout': False, 'stepPercent': 10, 'nonFullMaximumPercent': 90},
         'runtime': '1.6.640',
         'diagnostic': False,
-        'rageGain': {'mode': 'combatTimer', 'perSecond': 2, 'clearOnCombatEnd': True},
+        # 唯一增长源：原生 TESHitEvent，战斗中每个有效事件固定 +2，无每秒预算、无时间去重。
+        'rageGain': {'mode': 'combatHit', 'event': 'TESHitEvent', 'perHit': 2,
+                     'perSecondCap': None, 'deduplication': 'none', 'clearOnCombatEnd': True},
         'hudAlwaysVisible': True,
         'gameRuntimeTested': False,
         'originalFilesUnchanged': original_count,
@@ -109,7 +113,8 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(args.output, 'x', compression=ZIP_DEFLATED, compresslevel=9) as archive:
         for name, content in sorted(files.items()):
-            info = ZipInfo(name, date_time=(2026, 9, 25, 0, 0, 0))
+            # 确定性元数据：0.3.0 发布日期，不依赖构建时的系统时钟。
+            info = ZipInfo(name, date_time=(2026, 9, 29, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             archive.writestr(info, content)
@@ -119,8 +124,11 @@ def main():
         for name, content in files.items():
             if archive.read(name) != content:
                 raise ValueError(f'ZIP content mismatch: {name}')
+    archive_hash = digest(args.output)
+    with checksum.open('x', encoding='utf-8', newline='\n') as stream:
+        stream.write(f'{archive_hash}  {args.output.name}\n')
     print(json.dumps({'output': str(args.output), 'size': args.output.stat().st_size,
-                      'sha256': digest(args.output), 'files': len(files),
+                      'sha256': archive_hash, 'checksum': str(checksum), 'files': len(files),
                       'originalFilesUnchanged': original_count}, ensure_ascii=False, indent=2))
 
 

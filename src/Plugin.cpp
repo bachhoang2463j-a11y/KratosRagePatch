@@ -4,7 +4,7 @@
 extern "C" __declspec(dllexport) constinit SKSE::PluginVersionData SKSEPlugin_Version = [] {
     SKSE::PluginVersionData version;
     version.PluginName("KratosRage");
-    version.PluginVersion({0, 2, 0, 0});
+    version.PluginVersion({0, 3, 0, 0});
     version.AuthorName("KratosRagePatch");
     version.UsesAddressLibrary();
     version.UsesStructsPost629();
@@ -58,6 +58,6 @@ extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSE::LoadInterface*
         return false;
     }
     kr::RegisterSerializationCallbacks();
-    spdlog::info("KratosRage 0.2.0 loaded for Skyrim 1.6.640; combat timer +2/s, clear on combat end; damage hooks disabled");
+    spdlog::info("KratosRage 0.3.0 loaded for Skyrim 1.6.640; combat hits +2/event, no rate cap, clear on combat end; passive gain and damage hooks disabled");
     return true;
 }

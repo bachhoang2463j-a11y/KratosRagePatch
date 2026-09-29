@@ -82,6 +82,21 @@ def load_json(path: Path):
         return json.load(handle)
 
 
+def method_body(text: str, signature: str) -> str:
+    """Brace-balanced body of the first method whose definition starts with `signature`."""
+    start = text.index(signature)
+    open_brace = text.index("{", start)
+    depth = 0
+    for index in range(open_brace, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace + 1:index]
+    raise AssertionError(f"unterminated method body: {signature}")
+
+
 # --------------------------------------------------------------------------- esp binary
 
 def parse_plugin(data: bytes):
@@ -407,15 +422,25 @@ class TestNativeCrossFileConsistency(unittest.TestCase):
     def local_id(requested_form):
         return int(requested_form.rsplit("x", 1)[1], 16)
 
-    def test_combat_timer_is_the_only_production_gain_source(self):
+    def test_combat_hit_is_the_only_production_gain_source(self):
         text = self.native()
         self.assertNotIn("specialSources_", text)
         self.assertNotIn("IsEligibleOpponent", text)
+        # 0.3.0 起废弃全部计时/旧计分入口：生产路径不得再调用它们。
         self.assertNotIn("state_.TryAward(", text)
         self.assertNotIn("state_.TryAwardPlayerDamage(", text)
-        self.assertIn("state_.UpdateCombat(", text)
+        self.assertNotIn("state_.UpdateCombat(", text)
+        # 唯一增长源：原生 TESHitEvent sink -> ProcessCombatHit -> state_.TryAwardCombatHit。
+        self.assertIn("state_.TryAwardCombatHit(", text)
+        self.assertIn("AddEventSink<RE::TESHitEvent>", text)
+        self.assertIn("const RE::TESHitEvent", text)
+        self.assertIn("void GameBridge::ProcessCombatHit(", text)
+        # TickCombat 保留 ABI17 入口，但只做状态刷新，绝不增长怒气。
         self.assertIn("void GameBridge::TickCombat()", text)
         self.assertIn("IsInCombat()", text)
+        tick_body = method_body(text, "void GameBridge::TickCombat(")
+        self.assertNotIn("TryAwardCombatHit", tick_body,
+                         "TickCombat must refresh state only; hit gain belongs to ProcessCombatHit")
         for legacy in ("SubmitPlayerDamage", "SubmitWeaponHit", "SubmitMagicHit", "SubmitProjectileHit",
                        "SubmitIncomingHit", "SubmitKill"):
             match = re.search(rf"void GameBridge::{legacy}\([^)]*\)\s*\{{([^}}]*)\}}", text)
